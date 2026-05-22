@@ -38,17 +38,17 @@ LABELS = {
 LAYER1_KEYS = ["a1_spec_vs_mean", "a2_spec_change", "a3_comm_vs_mean",
                "b1_spread", "b2_price_vs_ma20"]
 
-# Layer 2 auto signals (MTF 4h/1h + VP weekly added separately)
+# Layer 2 auto signals
 LAYER2_SCORE_KEYS = ["b3_vwap", "c2_open_volume"]
 
 # Full Layer 2 auto keys (for strength calculation)
-LAYER2_AUTO_KEYS = ["b3_vwap", "mtf_4h", "mtf_1h", "vp_weekly_poc",
+LAYER2_AUTO_KEYS = ["b3_vwap", "vwap_mtd", "prev_day_break", "vp_weekly_poc",
                     "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch"]
 
 LAYER2_LABELS = {
-    "b3_vwap":         "L2-1  VWAP sesion (B3)",
-    "mtf_4h":          "L2-2  MA20(4h) alineacion MTF",
-    "mtf_1h":          "L2-3  MA20(1h) alineacion MTF",
+    "b3_vwap":         "L2-1  VWAP sesion (1m)",
+    "vwap_mtd":        "L2-2  VWAP MTD - tendencia mensual",
+    "prev_day_break":  "L2-3  Ruptura dia anterior H/L",
     "vp_weekly_poc":   "L2-4  VP semanal - precio vs POC",
     "c2_open_volume":  "L2-5  Vol apertura precio-volumen (C2)",
     "c2b_vwap_sigma":  "L2-6  Extension sigma VWAP sesion",
@@ -124,16 +124,31 @@ def _build_layer2(session, scores, mtf, vp_dict, price, direction, vwap_data=Non
         "c1_key_level":   None,  # manual, filled later
     }
 
-    # MTF 4h and 1h
-    if mtf and mtf.get("details"):
-        d = mtf["details"]
-        tf4 = d.get("4h")
-        tf1 = d.get("1h")
-        sig["mtf_4h"] = (1 if tf4["aligned"] else 0) if tf4 else None
-        sig["mtf_1h"] = (1 if tf1["aligned"] else 0) if tf1 else None
+    # VWAP MTD — tendencia mensual (ya calculado en vwap_data)
+    mtd = (vwap_data or {}).get("mtd")
+    if mtd and price:
+        sig["vwap_mtd"] = 1 if (price > mtd["vwap"] if direction == "LONG" else price < mtd["vwap"]) else 0
+        sig["_mtd_vwap"]  = mtd["vwap"]
+        sig["_mtd_sigma"] = mtd.get("sigma_pos")
     else:
-        sig["mtf_4h"] = None
-        sig["mtf_1h"] = None
+        sig["vwap_mtd"]   = None
+        sig["_mtd_vwap"]  = None
+        sig["_mtd_sigma"] = None
+
+    # Prev day break — precio sobre H / bajo L del dia anterior
+    from services.mtf_alignment import _prev_day as _pd
+    prev = _pd(session, "SBN26")
+    if prev and price:
+        if direction == "LONG":
+            sig["prev_day_break"] = 1 if price > prev["high"] else 0
+        else:
+            sig["prev_day_break"] = 1 if price < prev["low"] else 0
+        sig["_prev_high"] = prev["high"]
+        sig["_prev_low"]  = prev["low"]
+    else:
+        sig["prev_day_break"] = None
+        sig["_prev_high"] = None
+        sig["_prev_low"]  = None
 
     # VP weekly POC
     vp_weekly = (vp_dict or {}).get("weekly")
@@ -311,7 +326,7 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
     print("  CAPA 2 - EJECUCION INTRADIARIA (tecnico/timing)        LONG   SHORT")
     print("=" * 72)
 
-    L2_DISPLAY_KEYS = ["b3_vwap", "mtf_4h", "mtf_1h", "vp_weekly_poc",
+    L2_DISPLAY_KEYS = ["b3_vwap", "vwap_mtd", "prev_day_break", "vp_weekly_poc",
                        "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch"]
 
     for key in L2_DISPLAY_KEYS:
@@ -325,14 +340,16 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
             if mtf_l and mtf_l.get("details", {}).get("30m"):
                 d30 = mtf_l["details"]["30m"]
                 detail = "  precio=%.4f VWAP=%.4f" % (price or 0, d30["vwap"])
-        elif key == "mtf_4h":
-            tf = (mtf_l or {}).get("details", {}).get("4h")
-            if tf:
-                detail = "  MA20=%.4f  dist=%+.4f" % (tf["ma20"], tf["dist"])
-        elif key == "mtf_1h":
-            tf = (mtf_l or {}).get("details", {}).get("1h")
-            if tf:
-                detail = "  MA20=%.4f  dist=%+.4f" % (tf["ma20"], tf["dist"])
+        elif key == "vwap_mtd":
+            mtd_v = l2l.get("_mtd_vwap")
+            mtd_s = l2l.get("_mtd_sigma")
+            if mtd_v is not None:
+                detail = "  VWAP_MTD=%.4f  precio=%.4f  sigma=%+.2f" % (mtd_v, price or 0, mtd_s or 0)
+        elif key == "prev_day_break":
+            ph = l2l.get("_prev_high")
+            pl = l2l.get("_prev_low")
+            if ph is not None:
+                detail = "  prev_H=%.4f  prev_L=%.4f  precio=%.4f" % (ph, pl, price or 0)
         elif key == "vp_weekly_poc":
             vp_w = (vp_dict or {}).get("weekly")
             if vp_w:
@@ -473,7 +490,7 @@ def print_vwap_bands(vwap_data):
     print("  VWAP ANCLADO (bandas 3 desviaciones)")
     print("=" * 72)
 
-    for label, key, tf in [("Sesion", "session", "5m"), ("YTD", "ytd", "1h"), ("MTD", "mtd", "30m")]:
+    for label, key, tf in [("Sesion", "session", "1m"), ("YTD", "ytd", "1h"), ("MTD", "mtd", "30m")]:
         v = vwap_data.get(key)
         if not v:
             print("  %s (%s): sin datos" % (label, tf))
