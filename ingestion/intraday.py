@@ -15,6 +15,7 @@ INTRADAY_INSTRUMENTS = {
 }
 
 INTERVAL_CONFIG = {
+    "1m":  ("1m",  7),
     "5m":  ("5m",  59),
     "30m": ("30m", 59),
     "1h":  ("1h",  729),

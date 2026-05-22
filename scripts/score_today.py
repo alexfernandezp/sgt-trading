@@ -881,7 +881,7 @@ def run():
     # [0] Refresh intraday
     print("\n[0/5] Refrescando barras intraday SBN26...")
     try:
-        fetch_intraday(session, instruments=["SBN26"], intervals=["30m"])
+        fetch_intraday(session, instruments=["SBN26"], intervals=["1m", "5m", "30m"])
         price = get_current_price(session, "SBN26")
         print("  Precio actual SBN26: %s c/lb (Yahoo ~10min delay)" % price)
     except Exception as e:

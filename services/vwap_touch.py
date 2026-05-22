@@ -72,7 +72,7 @@ def count_today_touches(session: Session, instrument: str, level: float, toleran
     rows = session.execute(text("""
         SELECT datetime, high, low, close, volume
         FROM price_bars
-        WHERE instrument = :instr AND interval = '5m'
+        WHERE instrument = :instr AND interval = '1m'
           AND DATE(datetime) = CURRENT_DATE
         ORDER BY datetime ASC
     """), {"instr": instrument}).fetchall()

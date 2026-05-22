@@ -133,7 +133,7 @@ def get_vwap_bands(session: Session, instrument: str = "SBN26") -> dict:
 
     ytd     = anchored_vwap(session, instrument, ytd_anchor, interval="1h")
     mtd     = anchored_vwap(session, instrument, mtd_anchor, interval="30m")
-    session_ = anchored_vwap(session, instrument, today,      interval="5m")
+    session_ = anchored_vwap(session, instrument, today,      interval="1m")
 
     # Direction bias: sesion tiene el mismo peso que MTD/YTD (señal más inmediata)
     biases = []

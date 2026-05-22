@@ -18,6 +18,7 @@ Métricas:
   - Cuándo suele activarse MTF (día 0, +1d, +2d, ...)
 """
 import os, sys
+sys.stdout.reconfigure(encoding="utf-8")
 import numpy as np
 import pandas as pd
 
