@@ -40,8 +40,6 @@ _SIG = {
     "Prev Day Low":   3,
     "Prev Day Close": 2,
     "Prev Day Mid":   1,
-    "MA20(1h)":       2,
-    "MA20(4h)":       2,
     "OR High":        2,
     "OR Low":         2,
     # Fibonacci (rellenados dinamicamente, sig por ratio)
@@ -110,19 +108,6 @@ def _collect_levels(session, instrument, vwap_bands):
         levels["Prev Day Low"]   = prev["low"]
         levels["Prev Day Close"] = prev["close"]
         levels["Prev Day Mid"]   = round((prev["high"] + prev["low"]) / 2, 4)
-
-    # MA20(1h) and MA20(4h)
-    b1h = _bars(session, instrument, "1h", 25)
-    if len(b1h) >= 20:
-        ma1h = _ma([float(b[4]) for b in b1h])
-        if ma1h:
-            levels["MA20(1h)"] = ma1h
-
-    b4h = _bars(session, instrument, "4h", 25)
-    if len(b4h) >= 20:
-        ma4h = _ma([float(b[4]) for b in b4h])
-        if ma4h:
-            levels["MA20(4h)"] = ma4h
 
     # Opening range
     or_hi, or_lo = _opening_range(session, instrument)

@@ -244,6 +244,19 @@ def compute_vwap_touch_signal(
                 "touches_today": 0, "rejection_prob": None, "n_hist": 0,
                 "avg_rej_size": 0, "wick_rejection": False, "vol_declining": False}
 
+    # Verificacion direccional estricta: soporte solo activa LONG, resistencia solo SHORT
+    # Un nivel por debajo del precio es soporte → solo valido para LONG
+    # Un nivel por encima del precio es resistencia → solo valido para SHORT
+    level_above = level > price
+    if direction == "SHORT" and not level_above:
+        return {"signal": 0, "level": round(level, 4), "level_name": level_name,
+                "touches_today": 0, "rejection_prob": None, "n_hist": 0,
+                "avg_rej_size": 0, "wick_rejection": False, "vol_declining": False}
+    if direction == "LONG" and level_above:
+        return {"signal": 0, "level": round(level, 4), "level_name": level_name,
+                "touches_today": 0, "rejection_prob": None, "n_hist": 0,
+                "avg_rej_size": 0, "wick_rejection": False, "vol_declining": False}
+
     # Tolerancia para toque intraday: 0.40 x ATR30m
     touch_tol = round(0.40 * atr_30m, 4)
 

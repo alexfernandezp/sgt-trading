@@ -4,6 +4,7 @@ Ejecutar cada manana despues del pipeline.
 Uso: py scripts/score_today.py
 """
 import sys, os
+sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import SessionLocal
