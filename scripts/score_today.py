@@ -59,7 +59,7 @@ LAYER2_LABELS = {
     "c2b_vwap_sigma":   "L2-6  Extension sigma VWAP sesion",
     "or_breakout":      "L2-7  Opening Range breakout/rechazo",
     "vwap_touch":       "L2-8  VWAP multi-toque rechazo",
-    "swing_structure":  "L2-9  Estructura swing 30m/5m",
+    "swing_structure":  "L2-9  Estructura swing 15m/5m",
     "c1_key_level":     "L2-10 Nivel tecnico clave C1       [MANUAL]",
 }
 
@@ -411,14 +411,14 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
                     td["level_name"], n_t, rej_s, wick, vold)
         elif key == "swing_structure":
             ms = l2l.get("_ms_data") or {}
-            if ms.get("pattern_30m"):
-                p30   = ms.get("pattern_30m", "?")
+            if ms.get("pattern_15m"):
+                p15   = ms.get("pattern_15m", "?")
                 p5    = ms.get("pattern_5m", "?")
                 atr_r = ms.get("atr_ratio")
                 pos   = ms.get("position_pct")
                 atr_s = ("  ATR=%.2fx" % atr_r) if atr_r is not None else ""
                 pos_s = ("  pos=%.0f%%" % pos)  if pos  is not None else ""
-                detail = "  30m:[%s] 5m:[%s]%s%s" % (p30[:22], p5[:22], atr_s, pos_s)
+                detail = "  15m:[%s] 5m:[%s]%s%s" % (p15[:22], p5[:22], atr_s, pos_s)
 
         print("  %-46s %s     %s%s" % (label, tl, tr, detail))
 
@@ -708,24 +708,26 @@ def print_market_structure(ms):
     if not ms:
         return
 
-    s30 = ms.get("swing_30m", "unclear")
+    s15 = ms.get("swing_15m", "unclear")
     s5  = ms.get("swing_5m",  "unclear")
-    p30 = ms.get("pattern_30m", "sin datos")
+    p15 = ms.get("pattern_15m", "sin datos")
     p5  = ms.get("pattern_5m",  "sin datos")
-    a30 = ms.get("aligned_30m", False)
+    a15 = ms.get("aligned_15m", False)
     a5  = ms.get("aligned_5m",  False)
-    ph30, pl30 = ms.get("last_ph_30m"), ms.get("last_pl_30m")
+    ph15, pl15 = ms.get("last_ph_15m"), ms.get("last_pl_15m")
     ph5,  pl5  = ms.get("last_ph_5m"),  ms.get("last_pl_5m")
     pos = ms.get("position_pct")
     atr = ms.get("atr_ratio")
+    n15 = ms.get("n_bars_15m", 0)
 
-    print("\n  -- ESTRUCTURA DE MERCADO (swing 30m / 5m) --")
+    print("\n  -- ESTRUCTURA DE MERCADO (swing 15m / 5m, intradía) --")
 
-    ok30 = "[OK]" if a30 else "[--]"
+    ok15 = "[OK]" if a15 else "[--]"
     ok5  = "[OK]" if a5  else "[--]"
-    lvl30 = ("  PH=%.4f  PL=%.4f" % (ph30, pl30)) if ph30 and pl30 else ""
+    lvl15 = ("  PH=%.4f  PL=%.4f" % (ph15, pl15)) if ph15 and pl15 else ""
     lvl5  = ("  PH=%.4f  PL=%.4f" % (ph5,  pl5))  if ph5  and pl5  else ""
-    print("  %s  30m  %s%s" % (ok30, p30, lvl30))
+    n15_s = ("  (N=%d barras 15m)" % n15) if n15 else ""
+    print("  %s  15m  %s%s%s" % (ok15, p15, lvl15, n15_s))
     print("  %s   5m  %s%s" % (ok5,  p5,  lvl5))
 
     if pos is not None:

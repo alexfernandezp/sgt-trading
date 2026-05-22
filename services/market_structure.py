@@ -1,13 +1,15 @@
 """
 Estructura de mercado multitemporal para L2 (intradía).
 
-Timeframe stack:
-  30m — contexto de sesion (~2h por swing con N=4)
-  5m  — estructura de entrada (~30min por swing con N=3)
+Timeframe stack (todo intraday, sin barras 30m/4h):
+  15m — contexto reciente: resampleado de 5m en tiempo real, N=3
+        un swing confirma en ~1.5h
+  5m  — estructura de entrada, N=3
+        un swing confirma en ~30min
   1m  — posicion en barra y ratio ATR (momentum inmediato)
 
 Senal L2-9:
-  1 si ambos 30m y 5m alinean con la direccion del trade
+  1 si 15m y 5m alinean con la direccion del trade
   0 si al menos uno no alinea
   None si datos insuficientes en ambos
 """
@@ -18,8 +20,8 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-PIVOT_N       = {"30m": 4, "5m": 3}
-MIN_SWING_PCT = {"30m": 0.003, "5m": 0.001}   # 0.3% y 0.1% del precio
+PIVOT_N       = {"15m": 3, "5m": 3}
+MIN_SWING_PCT = {"15m": 0.002, "5m": 0.001}   # 0.2% y 0.1% del precio
 
 
 def _fetch_bars(session: Session, instrument: str, interval: str, n: int) -> list:
@@ -34,8 +36,28 @@ def _fetch_bars(session: Session, instrument: str, interval: str, n: int) -> lis
             for r in reversed(rows)]
 
 
+def _resample_to_15m(bars_5m: list) -> list:
+    """
+    Agrupa barras 5m en grupos de 3 → barras 15m.
+    OHLC: open=primero, high=max, low=min, close=ultimo.
+    No requiere timestamps alineados: usa posicion ordinal.
+    """
+    result = []
+    for i in range(0, len(bars_5m) - 2, 3):
+        grp = bars_5m[i:i + 3]
+        if len(grp) < 3:
+            break
+        result.append({
+            "dt": grp[-1]["dt"],
+            "h":  max(b["h"] for b in grp),
+            "l":  min(b["l"] for b in grp),
+            "c":  grp[-1]["c"],
+        })
+    return result
+
+
 def _pivot_highs_lows(bars: list, n: int) -> tuple:
-    """Pivot high en i: bars[i].h es max de [i-n .. i+n]. Necesita n barras a cada lado."""
+    """Pivot high en i: bars[i].h es maximo de [i-n .. i+n]."""
     ph, pl = [], []
     for i in range(n, len(bars) - n):
         if all(bars[j]["h"] <= bars[i]["h"] for j in range(i - n, i + n + 1) if j != i):
@@ -47,12 +69,13 @@ def _pivot_highs_lows(bars: list, n: int) -> tuple:
 
 def _swing_structure(bars: list, interval: str) -> dict:
     """
-    Clasifica la estructura de swing: bullish / bearish / contraction / expansion / unclear.
+    Clasifica la estructura de swing de las ultimas barras.
 
     bullish:     HH + HL  (tendencia alcista)
     bearish:     LH + LL  (tendencia bajista)
     contraction: LH + HL  (triangulo/coil)
     expansion:   HH + LL  (volatilidad)
+    unclear:     patron insuficiente o no significativo
     """
     n       = PIVOT_N.get(interval, 3)
     min_pct = MIN_SWING_PCT.get(interval, 0.001)
@@ -127,7 +150,7 @@ def _atr(bars: list, period: int = 14) -> float | None:
 
 def _atr_ratio(bars_5m: list) -> float | None:
     """
-    ATR(14) de las ultimas 14 barras 5m vs media de ATRs historicos (ventanas de 14).
+    ATR(14) actual vs media de ATRs historicos en ventanas de 14 barras (en 5m).
     > 1.20 → expansion de volatilidad  |  < 0.80 → contraccion.
     """
     if len(bars_5m) < 30:
@@ -147,62 +170,64 @@ def _atr_ratio(bars_5m: list) -> float | None:
 
 def compute_market_structure(session: Session, instrument: str, direction: str) -> dict:
     """
-    Calcula estructura de swing multitemporal (30m + 5m) y momentum 1m.
+    Calcula estructura de swing intraday (15m resampleado + 5m) y momentum 1m.
+
+    15m: resampleado de 5m en tiempo real (sin necesidad de barras 15m en DB).
+    Ambos TF viven dentro de la sesion intraday.
 
     Returns dict:
       signal       — 1 si ambos TF alinean, 0 si no, None si sin datos suficientes
-      swing_30m    — "bullish"|"bearish"|"contraction"|"expansion"|"unclear"
+      swing_15m    — "bullish"|"bearish"|"contraction"|"expansion"|"unclear"
       swing_5m     — idem
-      pattern_30m  — descripcion textual
+      pattern_15m  — descripcion textual
       pattern_5m   — idem
-      aligned_30m  — bool: 30m alineado con direction
+      aligned_15m  — bool: 15m alineado con direction
       aligned_5m   — bool: 5m alineado con direction
       position_pct — posicion en ultima barra 1m (0-100%)
-      atr_ratio    — ATR actual / ATR historico (5m, periodo 14)
+      atr_ratio    — ATR(14) actual / ATR historico medio (5m)
     """
-    bars_30m = _fetch_bars(session, instrument, "30m", 80)
-    bars_5m  = _fetch_bars(session, instrument, "5m",  100)
-    bars_1m  = _fetch_bars(session, instrument, "1m",  20)
+    # 150 barras 5m = 12.5h → suficiente para ~50 barras 15m tras resample
+    bars_5m_raw = _fetch_bars(session, instrument, "5m",  150)
+    bars_15m    = _resample_to_15m(bars_5m_raw)
+    bars_1m     = _fetch_bars(session, instrument, "1m",  20)
 
-    no_data_30 = {"structure": "unclear", "pattern": "sin datos 30m",
+    no_data_15 = {"structure": "unclear", "pattern": "sin datos 15m",
                   "last_ph": None, "prev_ph": None, "last_pl": None, "prev_pl": None}
     no_data_5  = {"structure": "unclear", "pattern": "sin datos 5m",
                   "last_ph": None, "prev_ph": None, "last_pl": None, "prev_pl": None}
 
-    sw_30m = _swing_structure(bars_30m, "30m") if len(bars_30m) >= 12 else no_data_30
-    sw_5m  = _swing_structure(bars_5m,  "5m")  if len(bars_5m)  >= 10 else no_data_5
+    sw_15m = _swing_structure(bars_15m,    "15m") if len(bars_15m)    >= 10 else no_data_15
+    sw_5m  = _swing_structure(bars_5m_raw, "5m")  if len(bars_5m_raw) >= 10 else no_data_5
 
     pos_pct   = _position_in_bar(bars_1m)
-    atr_ratio = _atr_ratio(bars_5m)
+    atr_ratio = _atr_ratio(bars_5m_raw)
 
     if direction == "LONG":
-        aligned_30m = sw_30m["structure"] == "bullish"
+        aligned_15m = sw_15m["structure"] == "bullish"
         aligned_5m  = sw_5m["structure"]  == "bullish"
     else:
-        aligned_30m = sw_30m["structure"] == "bearish"
+        aligned_15m = sw_15m["structure"] == "bearish"
         aligned_5m  = sw_5m["structure"]  == "bearish"
 
-    both_unclear = (sw_30m["structure"] == "unclear" and sw_5m["structure"] == "unclear")
-    if both_unclear:
-        signal = None
-    else:
-        signal = 1 if (aligned_30m and aligned_5m) else 0
+    both_unclear = (sw_15m["structure"] == "unclear" and sw_5m["structure"] == "unclear")
+    signal = None if both_unclear else (1 if (aligned_15m and aligned_5m) else 0)
 
     return {
         "signal":       signal,
-        "swing_30m":    sw_30m["structure"],
+        "swing_15m":    sw_15m["structure"],
         "swing_5m":     sw_5m["structure"],
-        "pattern_30m":  sw_30m["pattern"],
+        "pattern_15m":  sw_15m["pattern"],
         "pattern_5m":   sw_5m["pattern"],
-        "last_ph_30m":  sw_30m.get("last_ph"),
-        "last_pl_30m":  sw_30m.get("last_pl"),
+        "last_ph_15m":  sw_15m.get("last_ph"),
+        "last_pl_15m":  sw_15m.get("last_pl"),
         "last_ph_5m":   sw_5m.get("last_ph"),
         "last_pl_5m":   sw_5m.get("last_pl"),
-        "n_ph_30m":     sw_30m.get("n_ph", 0),
-        "n_pl_30m":     sw_30m.get("n_pl", 0),
+        "n_ph_15m":     sw_15m.get("n_ph", 0),
+        "n_pl_15m":     sw_15m.get("n_pl", 0),
         "n_ph_5m":      sw_5m.get("n_ph", 0),
         "n_pl_5m":      sw_5m.get("n_pl", 0),
-        "aligned_30m":  aligned_30m,
+        "n_bars_15m":   len(bars_15m),
+        "aligned_15m":  aligned_15m,
         "aligned_5m":   aligned_5m,
         "position_pct": pos_pct,
         "atr_ratio":    atr_ratio,
