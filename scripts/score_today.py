@@ -13,7 +13,6 @@ from database import SessionLocal
 from services.scoring import compute_auto_scores, save_scoring, get_current_price
 from services.trade_setup import compute_trade_setup
 from services.backtest import estimate_win_rate
-from services.mtf_alignment import compute_mtf_alignment
 from services.anchored_vwap import get_vwap_bands
 from services.entry_zone import compute_entry_zone
 from services.volume_profile import get_multiframe_vp, nearest_vp_level
@@ -103,6 +102,45 @@ def _strength(score, valid):
     if score >= 3:
         return "MODERADO"
     return "DEBIL"
+
+
+def _vwap_gate(vwap_data, direction):
+    """
+    Gate de entrada basado en sigma del VWAP de sesion.
+
+    BLOCKED : |sigma| > 2.0 opuesto a direction  → no operar
+    WARN    : |sigma| 1.0-2.0 opuesto             → reducir size
+    CLEAR   : dentro de rango normal
+
+    Returns (blocked, sigma, level, message)
+    """
+    sv = (vwap_data or {}).get("session")
+    if not sv:
+        return False, None, "CLEAR", None
+    sigma = sv.get("sigma_pos", 0)
+    vwap  = sv.get("vwap", 0)
+    lo1   = sv.get("lower_1", 0)
+    hi1   = sv.get("upper_1", 0)
+
+    if direction == "SHORT" and sigma < -2.0:
+        msg = ("GATE VWAP: precio a %.2fσ bajo VWAP sesion — zona de rebote estadistico.\n"
+               "  SHORT BLOQUEADO ahora. Esperar bounce al rango [-1σ, VWAP] (%.4f - %.4f).\n"
+               "  Entrada SHORT optima: rechazo en ese rango con L2-9 5m confirmado.") % (sigma, lo1, vwap)
+        return True, sigma, "BLOCKED", msg
+    if direction == "LONG" and sigma > +2.0:
+        msg = ("GATE VWAP: precio a +%.2fσ sobre VWAP sesion — zona de rechazo estadistico.\n"
+               "  LONG BLOQUEADO ahora. Esperar pullback al rango [VWAP, +1σ] (%.4f - %.4f).\n"
+               "  Entrada LONG optima: soporte en ese rango con L2-9 5m confirmado.") % (sigma, vwap, hi1)
+        return True, sigma, "BLOCKED", msg
+    if direction == "SHORT" and sigma < -1.0:
+        msg = ("AVISO VWAP: sigma=%.2f, SHORT en zona de posible rebote.\n"
+               "  Reducir size 40%%. Confirmar L2-9 5m bajista antes de entrar.") % sigma
+        return False, sigma, "WARN", msg
+    if direction == "LONG" and sigma > +1.0:
+        msg = ("AVISO VWAP: sigma=+%.2f, LONG en zona de posible rechazo.\n"
+               "  Reducir size 40%%. Confirmar L2-9 5m alcista antes de entrar.") % sigma
+        return False, sigma, "WARN", msg
+    return False, sigma, "CLEAR", None
 
 
 def _get_opening_range(session, instrument="SBN26"):
@@ -335,7 +373,7 @@ def print_layer1(sl, sr, inputs):
         print("  [!] LONG requiere B2_Z26w z<-1.5 y/o OI_DIV activo para alta conviccion")
 
 
-def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
+def print_layer2(l2l, l2r, vp_dict, price, inputs=None, vwap_data=None):
     """CAPA 2 - Ejecucion intradiaria: VWAP + MTF + VP + volumen."""
     print()
     print("=" * 72)
@@ -354,9 +392,10 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
         # Inline details
         detail = ""
         if key == "b3_vwap":
-            if mtf_l and mtf_l.get("details", {}).get("30m"):
-                d30 = mtf_l["details"]["30m"]
-                detail = "  precio=%.4f VWAP=%.4f" % (price or 0, d30["vwap"])
+            sv = (vwap_data or {}).get("session")
+            if sv:
+                detail = "  precio=%.4f  VWAP_ses=%.4f  sigma=%+.2f" % (
+                    price or 0, sv["vwap"], sv.get("sigma_pos", 0))
         elif key == "vwap_mtd":
             mtd_v = l2l.get("_mtd_vwap")
             mtd_s = l2l.get("_mtd_sigma")
@@ -749,7 +788,7 @@ def print_market_structure(ms):
 
 # ── Trade card ────────────────────────────────────────────────────────────────
 
-def print_trade_card(setup, bt, mtf=None, ez=None, vp=None, ms=None):
+def print_trade_card(setup, bt, ez=None, vp=None, ms=None):
     w   = 68
     sgn = "-" if setup["direction"] == "LONG" else "+"
     dir_label = "LONG  (compra)" if setup["direction"] == "LONG" else "SHORT (venta)"
@@ -947,32 +986,25 @@ def run():
 
     print_layer1(scores_l, scores_r, inputs)
 
-    # [2] Layer 2: MTF + VP weekly
-    print("\n[2/5] CAPA 2 - Ejecucion intradiaria (MTF + VP + volumen)...")
-    try:
-        mtf_l = compute_mtf_alignment(session, "LONG")
-        mtf_r = compute_mtf_alignment(session, "SHORT")
-    except Exception as e:
-        print("  Aviso MTF: %s" % e)
-        mtf_l = mtf_r = None
-
+    # [2] Layer 2: VP + VWAP + señales auto
+    print("\n[2/5] CAPA 2 - Ejecucion intradiaria (VP + VWAP + swing + volumen)...")
     try:
         vp_dict = get_multiframe_vp(session)
     except Exception as e:
         print("  Aviso VP: %s" % e)
         vp_dict = {}
 
-    # VWAP calculado aqui: necesario para la señal L2 sigma antes de mostrar bandas
+    # VWAP calculado aqui: necesario para señales L2 antes de mostrar bandas
     try:
         vwap_data = get_vwap_bands(session)
     except Exception as e:
         print("  Aviso VWAP (pre-L2): %s" % e)
         vwap_data = {}
 
-    l2l = _build_layer2(session, scores_l, mtf_l, vp_dict, price, "LONG",  vwap_data)
-    l2r = _build_layer2(session, scores_r, mtf_r, vp_dict, price, "SHORT", vwap_data)
+    l2l = _build_layer2(session, scores_l, None, vp_dict, price, "LONG",  vwap_data)
+    l2r = _build_layer2(session, scores_r, None, vp_dict, price, "SHORT", vwap_data)
 
-    print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs)
+    print_layer2(l2l, l2r, vp_dict, price, inputs, vwap_data=vwap_data)
 
     # [3] VWAP bands (ya calculado arriba, solo display)
     print("\n[3/5] VWAP anclado Sesion + YTD + MTD...")
@@ -1019,12 +1051,35 @@ def run():
     print("  VWAP bias  : %s" % vwap_bias)
     if vwap_bias != "NEUTRAL" and vwap_bias != direction and direction != "NEUTRAL":
         print("  [!] VWAP bias contradice la direccion - revisar")
+    # Gate preview: mostrar estado antes de pedir confirmacion
+    if direction not in ("NEUTRAL", None):
+        _gb, _gs, _gl, _gm = _vwap_gate(vwap_data, direction)
+        if _gl == "BLOCKED":
+            print("  [!!!] VWAP GATE ACTIVO: precio a %.2fσ — lectura completa tras confirmar" % (_gs or 0))
+        elif _gl == "WARN":
+            print("  [!]   VWAP WARN: sigma=%.2f — reducir size si confirmas" % (_gs or 0))
     print("=" * 72)
 
     confirmed_direction = ask_direction(direction)
 
     if confirmed_direction == "NEUTRAL":
         print("\n  NEUTRAL seleccionado. Sin trade hoy.")
+        session.close()
+        return
+
+    # ── VWAP sigma gate ───────────────────────────────────────────────────────
+    gate_blocked, gate_sigma, gate_level, gate_msg = _vwap_gate(vwap_data, confirmed_direction)
+    if gate_level in ("WARN", "BLOCKED"):
+        print()
+        prefix = "  [!!!]" if gate_blocked else "  [!] "
+        for line in gate_msg.split("\n"):
+            print("%s %s" % (prefix, line.strip()))
+    if gate_blocked:
+        print()
+        print("  " + "=" * 64)
+        print("  GATE ACTIVADO — NO operar en direccion %s en este momento." % confirmed_direction)
+        print("  Esperar mean-reversion del VWAP de sesion antes de entrar.")
+        print("  " + "=" * 64)
         session.close()
         return
 
@@ -1116,12 +1171,11 @@ def run():
             print("  Aviso backtest: %s" % e)
             bt = None
 
-        mtf_confirmed = mtf_l if confirmed_direction == "LONG" else mtf_r
-        l2_confirmed  = l2l   if confirmed_direction == "LONG" else l2r
-        ms_data       = l2_confirmed.get("_ms_data")
+        l2_confirmed = l2l if confirmed_direction == "LONG" else l2r
+        ms_data      = l2_confirmed.get("_ms_data")
 
         if setup:
-            print_trade_card(setup, bt, mtf_confirmed, ez, vp_dict, ms=ms_data)
+            print_trade_card(setup, bt, ez=ez, vp=vp_dict, ms=ms_data)
         else:
             print("\n  [!] No se pudo calcular el setup (datos insuficientes)")
     else:

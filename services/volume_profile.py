@@ -43,15 +43,17 @@ def _fetch_bars(session, instrument, interval, from_dt):
 
 def _build_profile(df, bin_size=BIN_SIZE):
     """
-    Distribuye el volumen de cada barra uniformemente sobre [low, high].
-    Devuelve array de (precio_centro_bin, volumen_acumulado).
+    Distribuye el volumen de cada barra sesgado hacia el typical price (H+L+C)/3.
+      60% del volumen → bin del TP (donde ocurre la mayor parte del trading)
+      40% del volumen → uniforme sobre todo el rango [low, high]
+    Esto aproxima la distribución real mejor que la uniforme, sin necesidad
+    de datos tick-by-tick.
     """
     if df is None or len(df) == 0:
         return None
 
     lo_global = float(df["low"].min())
     hi_global = float(df["high"].max())
-    # Extend slightly to avoid edge issues
     lo_global = round(np.floor(lo_global / bin_size) * bin_size, 6)
     hi_global = round(np.ceil(hi_global  / bin_size) * bin_size, 6)
 
@@ -60,19 +62,29 @@ def _build_profile(df, bin_size=BIN_SIZE):
     profile = np.zeros(len(centers))
 
     for _, row in df.iterrows():
-        lo, hi, vol = float(row["low"]), float(row["high"]), float(row["volume"])
-        if vol <= 0 or hi <= lo:
-            # Single-price bar — add all volume to nearest bin
+        lo  = float(row["low"])
+        hi  = float(row["high"])
+        cl  = float(row["close"])
+        vol = float(row["volume"])
+        if vol <= 0:
+            continue
+        if hi <= lo:
             idx = int(round((lo - lo_global) / bin_size))
             if 0 <= idx < len(profile):
                 profile[idx] += vol
             continue
-        # Find overlapping bins
-        i_lo = max(0,             int(np.floor((lo - lo_global) / bin_size)))
+
+        tp = (hi + lo + cl) / 3   # typical price — centro de gravedad del volumen
+
+        i_lo = max(0,              int(np.floor((lo - lo_global) / bin_size)))
         i_hi = min(len(profile)-1, int(np.floor((hi - lo_global) / bin_size)))
+        i_tp = max(i_lo, min(i_hi, int(np.floor((tp - lo_global) / bin_size))))
+
         n_bins = i_hi - i_lo + 1
-        per_bin = vol / n_bins
-        profile[i_lo:i_hi+1] += per_bin
+        # 40% uniforme, 60% concentrado en el bin del typical price
+        uniform_per_bin       = vol * 0.40 / n_bins
+        profile[i_lo:i_hi+1] += uniform_per_bin
+        profile[i_tp]         += vol * 0.60
 
     return pd.DataFrame({"price": centers, "volume": profile})
 

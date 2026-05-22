@@ -176,10 +176,12 @@ def _score_a3(session, direction):
     )).fetchall()
     if len(rows) < 4:
         return None, {}
-    vals   = [r[0] for r in rows]
-    latest = vals[0]
+    vals = [float(r[0]) for r in rows if r[0] is not None]
+    if not vals:
+        return None, {}
+    latest   = vals[0]
     mean_13w = sum(vals) / len(vals)
-    score  = _score(latest > mean_13w) if direction == "LONG" else _score(latest < mean_13w)
+    score    = _score(latest > mean_13w) if direction == "LONG" else _score(latest < mean_13w)
     return score, {"comm_net": latest, "comm_mean_13w": round(mean_13w)}
 
 

@@ -395,7 +395,10 @@ def compute_entry_zone(session: Session, direction: str, instrument: str = "SBN2
     df = df.iloc[::-1].reset_index(drop=True)
     prev_c = df["close"].shift(1)
     tr = pd.concat([(df["high"]-df["low"]), (df["high"]-prev_c).abs(), (df["low"]-prev_c).abs()], axis=1).max(axis=1)
-    atr_30m = float(tr.rolling(14).mean().dropna().iloc[-1])
+    _atr_series = tr.rolling(14).mean().dropna()
+    if _atr_series.empty:
+        return None
+    atr_30m = float(_atr_series.iloc[-1])
     if atr_30m <= 0:
         return None
 

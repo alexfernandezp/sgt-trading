@@ -84,7 +84,7 @@ def _build_df(session):
     # --- Merge COT en precio diario (con lag) ---
     cot_m = cot[["eff_date", "a1_long", "a1_short", "oi_4w_chg"]].rename(
         columns={"eff_date": "date"})
-    df = pd.merge_asof(df.sort_values("date"), cot_m, on="date").ffill()
+    df = pd.merge_asof(df.sort_values("date"), cot_m, on="date").ffill(limit=5)
 
     # OI divergencia precio-OI
     price_up = df["close"] > df["price_20ago"]
@@ -137,12 +137,14 @@ def estimate_win_rate(
         t_state   = {t: {"done": False, "exit_r": 0.0, "outcome": "to"} for t in targets_r}
 
         for j in range(i + 1, min(i + max_hold_days + 1, n)):
-            lo, hi   = float(df.loc[j, "low"]), float(df.loc[j, "high"])
+            lo, hi, cl = float(df.loc[j, "low"]), float(df.loc[j, "high"]), float(df.loc[j, "close"])
+            # Stop: intraday touch (realista — stop se ejecuta en vela)
+            # Target: close confirmation (conservador — evita contar wickes falsos)
             stop_hit = (lo <= stop) if direction == "LONG" else (hi >= stop)
             for t in targets_r:
                 if t_state[t]["done"]:
                     continue
-                tgt_hit = (hi >= t_prices[t]) if direction == "LONG" else (lo <= t_prices[t])
+                tgt_hit = (cl >= t_prices[t]) if direction == "LONG" else (cl <= t_prices[t])
                 if stop_hit and not tgt_hit:
                     t_state[t].update(done=True, outcome="loss", exit_r=-1.0)
                 elif tgt_hit:
