@@ -3,9 +3,11 @@ Scoring diario SGT Trading - modelo de dos capas.
 Ejecutar cada manana despues del pipeline.
 Uso: py scripts/score_today.py
 """
-import sys, os
+import sys, os, logging
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 from database import SessionLocal
 from services.scoring import compute_auto_scores, save_scoring, get_current_price
@@ -15,6 +17,7 @@ from services.mtf_alignment import compute_mtf_alignment
 from services.anchored_vwap import get_vwap_bands
 from services.entry_zone import compute_entry_zone
 from services.volume_profile import get_multiframe_vp, nearest_vp_level
+from services.market_structure import compute_market_structure
 from ingestion.intraday import fetch_intraday
 from ingestion.options import score_options, get_latest_files
 
@@ -44,18 +47,20 @@ LAYER2_SCORE_KEYS = ["b3_vwap", "c2_open_volume"]
 
 # Full Layer 2 auto keys (for strength calculation)
 LAYER2_AUTO_KEYS = ["b3_vwap", "vwap_mtd", "prev_day_break", "vp_weekly_poc",
-                    "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch"]
+                    "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch",
+                    "swing_structure"]
 
 LAYER2_LABELS = {
-    "b3_vwap":         "L2-1  VWAP sesion (1m)",
-    "vwap_mtd":        "L2-2  VWAP MTD - tendencia mensual",
-    "prev_day_break":  "L2-3  Ruptura dia anterior H/L",
-    "vp_weekly_poc":   "L2-4  VP semanal - precio vs POC",
-    "c2_open_volume":  "L2-5  Vol apertura precio-volumen (C2)",
-    "c2b_vwap_sigma":  "L2-6  Extension sigma VWAP sesion",
-    "or_breakout":     "L2-7  Opening Range breakout/rechazo",
-    "vwap_touch":      "L2-8  VWAP multi-toque rechazo",
-    "c1_key_level":    "L2-9  Nivel tecnico clave C1        [MANUAL]",
+    "b3_vwap":          "L2-1  VWAP sesion (1m)",
+    "vwap_mtd":         "L2-2  VWAP MTD - tendencia mensual",
+    "prev_day_break":   "L2-3  Ruptura dia anterior H/L",
+    "vp_weekly_poc":    "L2-4  VP semanal - precio vs POC",
+    "c2_open_volume":   "L2-5  Vol apertura precio-volumen (C2)",
+    "c2b_vwap_sigma":   "L2-6  Extension sigma VWAP sesion",
+    "or_breakout":      "L2-7  Opening Range breakout/rechazo",
+    "vwap_touch":       "L2-8  VWAP multi-toque rechazo",
+    "swing_structure":  "L2-9  Estructura swing 30m/5m",
+    "c1_key_level":     "L2-10 Nivel tecnico clave C1       [MANUAL]",
 }
 
 # Criteria that invert for SHORT
@@ -222,6 +227,16 @@ def _build_layer2(session, scores, mtf, vp_dict, price, direction, vwap_data=Non
         sig["vwap_touch"]  = None
         sig["_touch_data"] = {}
 
+    # Swing structure (L2-9): 30m contexto + 5m entrada
+    try:
+        ms = compute_market_structure(session, "SBN26", direction)
+        sig["swing_structure"] = ms.get("signal")
+        sig["_ms_data"]        = ms
+    except Exception as _e:
+        logger.debug("market_structure error: %s", _e)
+        sig["swing_structure"] = None
+        sig["_ms_data"]        = {}
+
     return sig
 
 
@@ -328,7 +343,8 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
     print("=" * 72)
 
     L2_DISPLAY_KEYS = ["b3_vwap", "vwap_mtd", "prev_day_break", "vp_weekly_poc",
-                       "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch"]
+                       "c2_open_volume", "c2b_vwap_sigma", "or_breakout", "vwap_touch",
+                       "swing_structure"]
 
     for key in L2_DISPLAY_KEYS:
         label = LAYER2_LABELS[key][:46]
@@ -393,6 +409,16 @@ def print_layer2(l2l, l2r, mtf_l, mtf_r, vp_dict, price, inputs=None):
                 rej_s = ("%.0f%%(N=%d)" % (rej * 100, n_h)) if rej is not None else "N/D"
                 detail = "  %s  toques=%d  rechazo_hist=%s  %s  %s" % (
                     td["level_name"], n_t, rej_s, wick, vold)
+        elif key == "swing_structure":
+            ms = l2l.get("_ms_data") or {}
+            if ms.get("pattern_30m"):
+                p30   = ms.get("pattern_30m", "?")
+                p5    = ms.get("pattern_5m", "?")
+                atr_r = ms.get("atr_ratio")
+                pos   = ms.get("position_pct")
+                atr_s = ("  ATR=%.2fx" % atr_r) if atr_r is not None else ""
+                pos_s = ("  pos=%.0f%%" % pos)  if pos  is not None else ""
+                detail = "  30m:[%s] 5m:[%s]%s%s" % (p30[:22], p5[:22], atr_s, pos_s)
 
         print("  %-46s %s     %s%s" % (label, tl, tr, detail))
 
@@ -675,50 +701,53 @@ def print_entry_zone(ez):
     print("  Razon          : %s" % rec["rationale"])
 
 
-# ── MTF section display ───────────────────────────────────────────────────────
+# ── Market structure display ──────────────────────────────────────────────────
 
-def _tag_mtf(aligned):
-    return "[OK]" if aligned else "[--]"
-
-
-def print_mtf_section(mtf):
-    if not mtf:
+def print_market_structure(ms):
+    """Muestra estructura de swing 30m/5m + posicion barra 1m + ATR ratio."""
+    if not ms:
         return
-    d = mtf["details"]
-    print("\n  -- ALINEACION MULTI-TIMEFRAME  %d/%d --" % (mtf["score"], mtf["max_score"]))
 
-    for tf_key in ("4h", "1h"):
-        tf = d.get(tf_key)
-        if tf:
-            sign_txt = "sobre" if tf["dist"] >= 0 else "bajo"
-            mom      = tf.get("momentum_3bars")
-            mom_str  = "  mom=%d/3" % mom if mom is not None else ""
-            print("  %s  %-4s  MA20=%.4f  precio %s en %+.4fc%s" % (
-                _tag_mtf(tf["aligned"]), tf_key, tf["ma20"], sign_txt, tf["dist"], mom_str))
+    s30 = ms.get("swing_30m", "unclear")
+    s5  = ms.get("swing_5m",  "unclear")
+    p30 = ms.get("pattern_30m", "sin datos")
+    p5  = ms.get("pattern_5m",  "sin datos")
+    a30 = ms.get("aligned_30m", False)
+    a5  = ms.get("aligned_5m",  False)
+    ph30, pl30 = ms.get("last_ph_30m"), ms.get("last_pl_30m")
+    ph5,  pl5  = ms.get("last_ph_5m"),  ms.get("last_pl_5m")
+    pos = ms.get("position_pct")
+    atr = ms.get("atr_ratio")
 
-    vwap_tf = d.get("30m")
-    if vwap_tf:
-        sign_txt = "sobre" if vwap_tf["dist"] >= 0 else "bajo"
-        mom      = vwap_tf.get("momentum_3bars")
-        mom_str  = "  mom=%d/3" % mom if mom is not None else ""
-        print("  %s  30m   VWAP=%.4f  precio %s en %+.4fc%s" % (
-            _tag_mtf(vwap_tf["aligned"]), vwap_tf["vwap"], sign_txt, vwap_tf["dist"], mom_str))
-    else:
-        print("  [??]  30m   VWAP=N/D  (fuera de sesion, verificar al abrir mercado)")
+    print("\n  -- ESTRUCTURA DE MERCADO (swing 30m / 5m) --")
 
-    score, mx = mtf["score"], mtf["max_score"]
-    stars = "***" if score < mx - 1 else ("**" if score == mx - 1 else "")
-    print("\n  %s  %s" % (stars, mtf["rec"]))
+    ok30 = "[OK]" if a30 else "[--]"
+    ok5  = "[OK]" if a5  else "[--]"
+    lvl30 = ("  PH=%.4f  PL=%.4f" % (ph30, pl30)) if ph30 and pl30 else ""
+    lvl5  = ("  PH=%.4f  PL=%.4f" % (ph5,  pl5))  if ph5  and pl5  else ""
+    print("  %s  30m  %s%s" % (ok30, p30, lvl30))
+    print("  %s   5m  %s%s" % (ok5,  p5,  lvl5))
 
-    prev = mtf.get("prev_day")
-    if prev:
-        print("\n  Ref ayer (%s)  H=%.4f  L=%.4f  C=%.4f" % (
-            prev["date"], prev["high"], prev["low"], prev["close"]))
+    if pos is not None:
+        pos_desc = "alta" if pos > 70 else ("baja" if pos < 30 else "media")
+        bar_bar  = int(pos / 5)
+        bar_str  = "[" + "#" * bar_bar + "." * (20 - bar_bar) + "]"
+        print("  Posicion barra 1m : %.0f%%  %s  (%s en rango)" % (pos, bar_str, pos_desc))
+
+    if atr is not None:
+        if atr > 1.20:
+            atr_desc = "EXPANSION"
+        elif atr < 0.80:
+            atr_desc = "CONTRACCION"
+        else:
+            atr_desc = "normal"
+        print("  ATR ratio (5m)    : %.2fx  [%s]" % (atr, atr_desc))
+
 
 
 # ── Trade card ────────────────────────────────────────────────────────────────
 
-def print_trade_card(setup, bt, mtf=None, ez=None, vp=None):
+def print_trade_card(setup, bt, mtf=None, ez=None, vp=None, ms=None):
     w   = 68
     sgn = "-" if setup["direction"] == "LONG" else "+"
     dir_label = "LONG  (compra)" if setup["direction"] == "LONG" else "SHORT (venta)"
@@ -750,7 +779,7 @@ def print_trade_card(setup, bt, mtf=None, ez=None, vp=None):
             print("  OHLC sesion       : O=%.4f  H=%.4f  L=%.4f  C=%.4f  (%d barras)" % (
                 ohlc["open"], ohlc["high"], ohlc["low"], ohlc["close"], ohlc["n_bars"]))
 
-    print_mtf_section(mtf)
+    print_market_structure(ms)
     print_volume_profile(vp, setup["entry"])
     print_entry_zone(ez)
 
@@ -1086,9 +1115,11 @@ def run():
             bt = None
 
         mtf_confirmed = mtf_l if confirmed_direction == "LONG" else mtf_r
+        l2_confirmed  = l2l   if confirmed_direction == "LONG" else l2r
+        ms_data       = l2_confirmed.get("_ms_data")
 
         if setup:
-            print_trade_card(setup, bt, mtf_confirmed, ez, vp_dict)
+            print_trade_card(setup, bt, mtf_confirmed, ez, vp_dict, ms=ms_data)
         else:
             print("\n  [!] No se pudo calcular el setup (datos insuficientes)")
     else:
