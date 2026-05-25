@@ -941,8 +941,15 @@ def print_santos_signal(santos, snap):
             qty = ("  %d t" % s["load_qty_t"]) if s.get("load_qty_t") else ""
             print("    %-30s  %-25s%s" % (s["ship"][:30], s["terminal"][:25], qty))
 
-    # Próximas llegadas esperadas (expected Long)
-    exp_long = [s for s in snap.get("expected", []) if (s.get("nav_type") or "").strip() == "Long"]
+    # Próximas llegadas esperadas (expected Long, solo futuras)
+    _today   = datetime.today().date()
+    exp_long = [
+        s for s in snap.get("expected", [])
+        if (s.get("nav_type") or "").strip() == "Long"
+        and (s.get("arrival_dt") is None or
+             (hasattr(s["arrival_dt"], "date") and s["arrival_dt"].date() >= _today) or
+             (isinstance(s["arrival_dt"], str) and s["arrival_dt"][:10] >= str(_today)))
+    ]
     if exp_long:
         print()
         print("  Próximas llegadas ACUCAR Long (exportación):")

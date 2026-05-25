@@ -259,8 +259,12 @@ def fetch_santos_port(session: Session) -> dict:
     session.commit()
 
     # Métricas de resumen
-    # Expected: contar solo Long (exportación internacional)
-    exp_long = [s for s in result["expected"] if s.get("nav_type", "").strip() == "Long"]
+    # Expected: solo Long con arrival_dt >= hoy (excluir entradas ya pasadas)
+    exp_long = [
+        s for s in result["expected"]
+        if s.get("nav_type", "").strip() == "Long"
+        and (s.get("arrival_dt") is None or s["arrival_dt"].date() >= today)
+    ]
     result["n_expected"]       = len(exp_long)
     result["tonnage_expected"] = sum(s["weight_t"] or 0 for s in exp_long)
 
@@ -306,7 +310,13 @@ def get_latest_snapshot(session: Session) -> Optional[dict]:
         }
         result[page].append(d)
 
-    exp_long = [s for s in result["expected"] if (s.get("nav_type") or "").strip() == "Long"]
+    today    = date.today()
+    exp_long = [
+        s for s in result["expected"]
+        if (s.get("nav_type") or "").strip() == "Long"
+        and (s.get("arrival_dt") is None or
+             (hasattr(s["arrival_dt"], "date") and s["arrival_dt"].date() >= today))
+    ]
     result["n_expected"]       = len(exp_long)
     result["tonnage_expected"] = sum((s["weight_t"] or 0) for s in exp_long)
     result["n_scheduled"]      = len(result["scheduled"])
