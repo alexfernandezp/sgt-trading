@@ -114,6 +114,57 @@ class OptionsData(Base):
     )
 
 
+class BrazilProduction(Base):
+    """
+    Produccion sucroalcooleira de Brasil (MAPA) por quincena.
+    Fuente: MAPA — Acompanhamento da Producao Sucroalcooleira.
+    Fila nacional: "Tot.g" del XLS.
+    """
+    __tablename__ = "brazil_production"
+    id                  = Column(Integer, primary_key=True)
+    report_date         = Column(Date, nullable=False)    # fecha aproximada de referencia
+    harvest_year        = Column(String(10), nullable=False)   # ej. "2025-2026"
+    fortnight_seq       = Column(Integer)                 # quincena acumulada del año cosecha (1,2,…26)
+    cane_crushed_t      = Column(Numeric(18, 0))
+    sugar_t             = Column(Numeric(18, 0))
+    ethanol_anhydrous_m3 = Column(Numeric(18, 0))
+    ethanol_hydrated_m3  = Column(Numeric(18, 0))
+    ethanol_total_m3    = Column(Numeric(18, 0))
+    sugar_mix_pct       = Column(Numeric(6, 3))           # azucar / (azucar+etanol equivalente)
+    source_url          = Column(String(500))
+    created_at          = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("harvest_year", "fortnight_seq", name="uq_brazil_harvest_fortnight"),
+    )
+
+
+class SantosPortSnapshot(Base):
+    """
+    Snapshot diario del ship tracker del Puerto de Santos.
+    Filtrado: solo barcos con cargo ACUCAR/SUGAR.
+    Tres páginas: expected_arrivals, scheduled_arrivals, berthed_ships.
+    """
+    __tablename__ = "santos_port_snapshot"
+    id            = Column(Integer, primary_key=True)
+    snapshot_date = Column(Date, nullable=False)
+    page          = Column(String(20), nullable=False)   # expected|scheduled|berthed
+    ship_name     = Column(String(100), nullable=False)
+    cargo         = Column(String(100))
+    terminal      = Column(String(100))
+    nav_type      = Column(String(10))                   # Long|Cabo|None
+    arrival_dt    = Column(DateTime)                     # expected/scheduled
+    load_qty_t    = Column(Integer)                      # berthed: tonelaje cargando
+    weight_t      = Column(Integer)                      # expected: peso declarado
+    evento        = Column(String(50))                   # scheduled: ATRACACAO etc.
+    voyage        = Column(String(50))
+    duv           = Column(String(20))                   # ID Porto Santos
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "page", "ship_name", "terminal",
+                         name="uq_santos_date_page_ship_terminal"),
+    )
+
+
 class CalendarEvent(Base):
     __tablename__ = "calendar_events"
     id             = Column(Integer, primary_key=True)

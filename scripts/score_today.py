@@ -4,6 +4,7 @@ Ejecutar cada manana despues del pipeline.
 Uso: py scripts/score_today.py
 """
 import sys, os, logging
+from datetime import datetime
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,6 +18,11 @@ from services.anchored_vwap import get_vwap_bands
 from services.entry_zone import compute_entry_zone
 from services.volume_profile import get_multiframe_vp, nearest_vp_level
 from services.market_structure import compute_market_structure
+from services.brazil_signal import compute_brazil_signal
+from services.macro_signals import compute_macro_signals
+from services.options_surface import get_vol_surface_for_score
+from services.santos_signal import compute_santos_signal
+from ingestion.santos_port import get_latest_snapshot
 from ingestion.intraday import fetch_intraday
 from ingestion.options import score_options, get_latest_files
 
@@ -740,6 +746,236 @@ def print_entry_zone(ez):
     print("  Razon          : %s" % rec["rationale"])
 
 
+# ── Brazil fundamental display ────────────────────────────────────────────────
+
+def print_brazil_signal(brazil):
+    """Muestra señal fundamental A4 — produccion sucroalcooleira MAPA Brasil."""
+    if not brazil:
+        print("\n  A4 Brasil MAPA: sin datos (ejecutar ingestion/brazil_mapa.py)")
+        return
+
+    data   = brazil.get("data", {})
+    sig    = brazil.get("signal_a4", 0)
+    a4a    = brazil.get("signal_a4a", 0)
+    a4b    = brazil.get("signal_a4b", 0)
+    bias   = brazil.get("bias", "NEUTRAL")
+    yoy    = brazil.get("yoy_pct")
+    mix    = data.get("sugar_mix_pct")
+    hy     = data.get("harvest_year", "?")
+    seq    = data.get("fortnight_seq", "?")
+    cane   = data.get("cane_current")
+    sugar  = data.get("sugar_current")
+
+    bias_tag = {"LONG": "[LONG  alcista]", "SHORT": "[SHORT bajista]", "NEUTRAL": "[NEUTRAL]"}.get(bias, bias)
+
+    print()
+    print("  -- A4 FUNDAMENTAL BRASIL (MAPA sucroalcooleira) --")
+    print("  Temporada %-9s  Quincena %2s   %s" % (hy, seq, bias_tag))
+
+    if cane:
+        print("  Caña molida  : {:>14,.0f} t".format(cane))
+    if sugar:
+        print("  Produccion azucar: {:>12,.0f} t".format(sugar))
+    if yoy is not None:
+        yoy_tag = "↑ MAYOR oferta → presion SHORT" if yoy > 2 else ("↓ MENOR oferta → sesgo LONG" if yoy < -2 else "neutral")
+        print("  YoY caña     : %+.1f%%  %s" % (yoy, yoy_tag))
+    if mix is not None:
+        mix_tag = "más azúcar exportable → presion SHORT" if mix > 45 else "más etanol → menos azúcar disponible → sesgo LONG"
+        print("  Mix azucar   : %.1f%%  %s" % (mix, mix_tag))
+
+    bar_pos = int((sig + 1) / 2 * 20)
+    bar_str = "[" + "-" * max(0, bar_pos - 1) + "|" + "-" * max(0, 19 - bar_pos) + "]"
+    print("  A4 total : %+.2f   A4a(YoY)=%+.2f  A4b(mix)=%+.2f" % (sig, a4a, a4b))
+    print("  Escala   : -1.0 %s +1.0  (+ = alcista)" % bar_str)
+
+
+# ── Macro signals display ─────────────────────────────────────────────────────
+
+def print_macro_signals(macro, direction):
+    """Muestra señales macro: BRL/USD, Brent, correlación intraday."""
+    if not macro:
+        print("\n  MACRO (BRL/USD + Brent): sin datos")
+        return
+
+    brl   = macro.get("brl",   {})
+    brent = macro.get("brent", {})
+    corr  = macro.get("corr",  {})
+    score = macro.get("macro_score", 0)
+    bias  = macro.get("macro_bias", "NEUTRAL")
+
+    bias_map = {
+        "STRONG_LONG":  "[STRONG LONG  +++]",
+        "LONG":         "[LONG          + ]",
+        "NEUTRAL":      "[NEUTRAL       ~ ]",
+        "CONTRA":       "[CONTRA        - ]",
+        "STRONG_CONTRA":"[STRONG CONTRA ---]",
+    }
+    bias_tag = bias_map.get(bias, "[%s]" % bias)
+
+    print()
+    print("  -- MACRO (BRL/USD + Brent + correlación intraday) --")
+    print("  Score macro: %+d / 3   %s   (dirección: %s)" % (score, bias_tag, direction))
+
+    # BRL/USD
+    brl_p = brl.get("brl_per_usd")
+    brl_b = brl.get("bias", "NEUTRAL")
+    brl_ma = brl.get("vs_ma20_pct")
+    brl_1d = brl.get("change_1d_pct")
+    if brl_p:
+        brl_ma_s = ("%+.1f%% vs MA20" % brl_ma) if brl_ma is not None else ""
+        print("  BRL/USD : %.4f USD/BRL  (%.4f BRL/USD)  %s  1d=%+.2f%%  [%s]" % (
+            brl.get("usd_per_brl", 0), brl_p, brl_ma_s, brl_1d or 0, brl_b))
+    else:
+        print("  BRL/USD : sin datos")
+
+    # Brent
+    bp = brent.get("brent_price")
+    bb = brent.get("bias", "NEUTRAL")
+    b1d = brent.get("change_1d_pct")
+    b5d = brent.get("change_5d_pct")
+    if bp:
+        print("  Brent   : $%.2f/bbl  1d=%+.2f%%  5d=%+.2f%%  [%s]" % (bp, b1d or 0, b5d or 0, bb))
+    else:
+        print("  Brent   : sin datos")
+
+    # Correlación intraday
+    cb  = corr.get("corr_brent_sugar")
+    cbrl = corr.get("corr_brl_sugar")
+    bt5  = corr.get("brent_trend_5m")
+    brt5 = corr.get("brl_trend_5m")
+    if cb is not None or cbrl is not None:
+        cb_s   = ("ρ(Brent/SB)=%+.2f" % cb)   if cb   is not None else "ρ(Brent/SB)=N/D"
+        cbrl_s = ("ρ(BRL/SB)=%+.2f" % cbrl)   if cbrl is not None else "ρ(BRL/SB)=N/D"
+        bt_s   = ("Brent1h=%+.2f%%" % bt5)     if bt5  is not None else ""
+        brt_s  = ("BRL1h=%+.2f%%" % brt5)      if brt5 is not None else ""
+        print("  Correl  : %s  %s  %s  %s  [%s]" % (
+            cb_s, cbrl_s, bt_s, brt_s, corr.get("bias", "NEUTRAL")))
+    else:
+        print("  Correl  : sin datos 5m")
+
+
+# ── Vol surface display ───────────────────────────────────────────────────────
+
+def print_vol_surface(surf):
+    """Muestra superficie de volatilidad implícita completa."""
+    if not surf or not surf.get("by_contract"):
+        print("\n  Vol surface: sin datos (colocar CSVs en OneDrive/sgt_trading/data/Options)")
+        return
+
+    by_c = surf["by_contract"]
+    ts   = surf.get("term_structure", [])
+    skew = surf.get("skew_bias", "FLAT")
+
+    print()
+    print("  -- SUPERFICIE DE VOLATILIDAD IMPLÍCITA --")
+
+    skew_map = {
+        "CALL_SKEW": "CALL SKEW → mercado compra calls (expectativa alcista)",
+        "PUT_SKEW":  "PUT SKEW  → mercado compra puts  (cobertura bajista)",
+        "FLAT":      "FLAT      → sin sesgo direccional en opciones",
+    }
+    print("  Skew: %s" % skew_map.get(skew, skew))
+
+    # Term structure
+    if ts:
+        ts_str = "   ".join("%-6s IV=%.1f%%" % (t["contract"], t["atm_iv_pct"]) for t in ts)
+        print("  Term structure: %s" % ts_str)
+
+    # Por contrato
+    for ctrt, d in by_c.items():
+        atm  = d.get("atm_iv")
+        rr   = d.get("rr25")
+        bf   = d.get("bf25")
+        pc   = d.get("put_call_oi")
+        mp   = d.get("max_pain")
+        coi  = d.get("total_call_oi", 0)
+        poi  = d.get("total_put_oi", 0)
+
+        if atm is None and pc is None:
+            continue
+
+        atm_s  = ("ATM_IV=%.1f%%" % atm)          if atm  is not None else "ATM_IV=N/D"
+        rr_s   = ("RR25=%+.1f%%" % rr)             if rr   is not None else "RR25=N/D"
+        bf_s   = ("BF25=%+.1f%%" % bf)             if bf   is not None else ""
+        pc_s   = ("P/C_OI=%.2f [C=%d P=%d]" % (pc, coi, poi)) if pc is not None else "P/C=N/D"
+        mp_s   = ("MaxPain=%.2f" % mp)              if mp   is not None else "MaxPain=N/D"
+        print("  %-6s  %s  %s  %s  %s  %s" % (ctrt, atm_s, rr_s, bf_s, pc_s, mp_s))
+
+
+# ── Santos port display ───────────────────────────────────────────────────────
+
+def print_santos_signal(santos, snap):
+    """Muestra señal A5 — cola de exportación de azúcar en Santos."""
+    print()
+    print("  -- A5 PUERTO DE SANTOS (cola exportación azúcar) --")
+
+    if snap is None:
+        print("  Sin datos — ejecutar: from ingestion.santos_port import fetch_santos_port")
+        return
+
+    # Ships listing por página
+    today_str = snap.get("snapshot_date", "?")
+    n_exp  = snap.get("n_expected", 0)
+    n_sch  = snap.get("n_scheduled", 0)
+    n_ber  = snap.get("n_berthed", 0)
+    t_exp  = snap.get("tonnage_expected", 0)
+    t_ber  = snap.get("tonnage_berthed", 0)
+
+    print("  Snapshot: %s" % today_str)
+    print()
+    print("  %-12s  %-8s  %-10s  Barcos ACUCAR" % ("Página", "Barcos", "Tonelaje"))
+    print("  " + "-" * 52)
+    print("  %-12s  %-8d  %-10s" % ("Expected(Long)", n_exp,  ("%d t" % t_exp) if t_exp else "N/D"))
+    print("  %-12s  %-8d  %-10s" % ("Scheduled",      n_sch,  ""))
+    print("  %-12s  %-8d  %-10s" % ("Berthed",         n_ber,  ("%d t" % t_ber) if t_ber else "N/D"))
+    print("  " + "-" * 52)
+    print("  %-12s  %-8d  %-10s" % ("TOTAL", n_exp + n_sch + n_ber,
+                                     ("%d t" % (t_exp + t_ber)) if (t_exp or t_ber) else "N/D"))
+
+    # Barcos berthed (cargando ahora)
+    berthed = snap.get("berthed", [])
+    if berthed:
+        print()
+        print("  Cargando ahora (berthed):")
+        for s in berthed[:8]:
+            qty = ("  %d t" % s["load_qty_t"]) if s.get("load_qty_t") else ""
+            print("    %-30s  %-25s%s" % (s["ship"][:30], s["terminal"][:25], qty))
+
+    # Próximas llegadas esperadas (expected Long)
+    exp_long = [s for s in snap.get("expected", []) if (s.get("nav_type") or "").strip() == "Long"]
+    if exp_long:
+        print()
+        print("  Próximas llegadas ACUCAR Long (exportación):")
+        exp_long_sorted = sorted(exp_long, key=lambda x: x.get("arrival_dt") or datetime.max)
+        for s in exp_long_sorted[:8]:
+            arr = s["arrival_dt"].strftime("%d/%m %H:%M") if s.get("arrival_dt") else "?"
+            qty = ("  %d t" % s["weight_t"]) if s.get("weight_t") else ""
+            print("    %-30s  %s  %-20s%s" % (s["ship"][:30], arr, s["terminal"][:20], qty))
+
+    # Señal A5
+    if santos:
+        sig   = santos.get("signal_a5", 0)
+        bias  = santos.get("bias", "NEUTRAL")
+        z     = santos.get("z_combined")
+        ms    = santos.get("mean_ships")
+        mt    = santos.get("mean_tonnage")
+
+        bias_tag = {"LONG": "[LONG  alcista]", "SHORT": "[SHORT bajista]",
+                    "NEUTRAL": "[NEUTRAL]"}.get(bias, bias)
+        bar_pos = int((sig + 1) / 2 * 20)
+        bar_str = "[" + "-" * max(0, bar_pos - 1) + "|" + "-" * max(0, 19 - bar_pos) + "]"
+
+        print()
+        print("  A5 Santos: %+.2f   %s" % (sig, bias_tag))
+        print("  Escala   : -1.0 %s +1.0" % bar_str)
+        if z is not None:
+            print("  Z-score  : %.2f  (media30d: %.1f barcos, %.0f t)" % (
+                z, ms or 0, mt or 0))
+    else:
+        print()
+        print("  A5: historial insuficiente (<5 días) — informativo solo")
+
+
 # ── Market structure display ──────────────────────────────────────────────────
 
 def print_market_structure(ms):
@@ -986,6 +1222,35 @@ def run():
 
     print_layer1(scores_l, scores_r, inputs)
 
+    # A4: señal fundamental Brasil (MAPA bi-weekly)
+    try:
+        brazil = compute_brazil_signal(session)
+    except Exception as e:
+        logger.debug("brazil_signal error: %s", e)
+        brazil = None
+    print_brazil_signal(brazil)
+
+    # Macro intraday: BRL/USD + Brent + correlación (dirección sugerida por L1)
+    l1_l_sum = _layer_sum(scores_l, LAYER1_KEYS)
+    l1_r_sum = _layer_sum(scores_r, LAYER1_KEYS)
+    l1_dir_hint = "LONG" if l1_l_sum >= l1_r_sum else "SHORT"
+    try:
+        macro = compute_macro_signals(l1_dir_hint)
+    except Exception as e:
+        logger.debug("macro_signals error: %s", e)
+        macro = None
+    print_macro_signals(macro, l1_dir_hint)
+
+    # A5: cola de exportación azúcar en Puerto de Santos
+    try:
+        santos_snap   = get_latest_snapshot(session)
+        santos_signal = compute_santos_signal(session, santos_snap)
+    except Exception as e:
+        logger.debug("santos_signal error: %s", e)
+        santos_snap   = None
+        santos_signal = None
+    print_santos_signal(santos_signal, santos_snap)
+
     # [2] Layer 2: VP + VWAP + señales auto
     print("\n[2/5] CAPA 2 - Ejecucion intradiaria (VP + VWAP + swing + volumen)...")
     try:
@@ -1015,28 +1280,53 @@ def run():
         print("  Aviso VWAP: %s" % e)
         vwap_bias = "NEUTRAL"
 
-    # [4] Options C3
-    print("\n[4/5] Opciones...")
+    # [4] Options: superficie vol completa (OneDrive) + C3
+    print("\n[4/5] Opciones + superficie de volatilidad...")
     opt_c3_long  = None
     opt_c3_short = None
     opt_inputs   = {}
-    files = get_latest_files("SBN26")
-    if files["chain"]:
-        print("  Archivo: %s" % files["chain"].name)
-        c3_l, opt_l = score_options("LONG",  "SBN26", price)
-        c3_r, opt_r = score_options("SHORT", "SBN26", price)
-        if c3_l is not None:
-            opt_c3_long  = c3_l
-            opt_c3_short = c3_r
-            opt_inputs.update({"put_call_ratio_oi": opt_l.get("put_call_ratio_oi"), "max_pain": opt_l.get("max_pain")})
-            print("  C3 LONG=%s  SHORT=%s  P/C=%.2f  max_pain=%s" % (
-                _tag(c3_l), _tag(c3_r),
-                opt_l.get("put_call_ratio_oi", 0) or 0,
-                opt_l.get("max_pain", "?")))
+    vol_surf     = None
+
+    # Primario: options_surface (OneDrive — Greeks + Chain CSVs)
+    if price:
+        try:
+            vol_surf = get_vol_surface_for_score(price)
+            print_vol_surface(vol_surf)
+            # C3 de la superficie (put/call OI + max pain)
+            c3_surf_l = vol_surf.get("c3_long")
+            c3_surf_r = vol_surf.get("c3_short")
+            if c3_surf_l is not None:
+                opt_c3_long  = c3_surf_l
+                opt_c3_short = c3_surf_r
+                front = vol_surf.get("by_contract", {}).get("SBN26", {})
+                opt_inputs.update({
+                    "put_call_ratio_oi": front.get("put_call_oi"),
+                    "max_pain":          front.get("max_pain"),
+                })
+                print("  C3 surface LONG=%s  SHORT=%s" % (_tag(c3_surf_l), _tag(c3_surf_r)))
+        except Exception as e:
+            logger.debug("options_surface error: %s", e)
+            vol_surf = None
+
+    # Fallback: CSV local (data/opciones/)
+    if opt_c3_long is None:
+        files = get_latest_files("SBN26")
+        if files["chain"]:
+            print("  Fallback CSV local: %s" % files["chain"].name)
+            c3_l, opt_l = score_options("LONG",  "SBN26", price)
+            c3_r, opt_r = score_options("SHORT", "SBN26", price)
+            if c3_l is not None:
+                opt_c3_long  = c3_l
+                opt_c3_short = c3_r
+                opt_inputs.update({"put_call_ratio_oi": opt_l.get("put_call_ratio_oi"), "max_pain": opt_l.get("max_pain")})
+                print("  C3 LONG=%s  SHORT=%s  P/C=%.2f  max_pain=%s" % (
+                    _tag(c3_l), _tag(c3_r),
+                    opt_l.get("put_call_ratio_oi", 0) or 0,
+                    opt_l.get("max_pain", "?")))
+            else:
+                print("  [!] No se pudo parsear: %s" % opt_l.get("error", ""))
         else:
-            print("  [!] No se pudo parsear: %s" % opt_l.get("error", ""))
-    else:
-        print("  Sin CSV de opciones (C3 manual mas adelante)")
+            print("  Sin CSV de opciones (C3 manual mas adelante)")
 
     # [5] Combined decision
     direction, decision_auto, rationale = compute_combined_decision(scores_l, scores_r, l2l, l2r)
@@ -1051,6 +1341,30 @@ def run():
     print("  VWAP bias  : %s" % vwap_bias)
     if vwap_bias != "NEUTRAL" and vwap_bias != direction and direction != "NEUTRAL":
         print("  [!] VWAP bias contradice la direccion - revisar")
+    if macro:
+        mb  = macro.get("macro_bias", "NEUTRAL")
+        ms_ = macro.get("macro_score", 0)
+        brl_d = macro.get("brl",   {}).get("bias", "N/D")
+        brt_d = macro.get("brent", {}).get("bias", "N/D")
+        print("  Macro      : score=%+d  bias=%s  (BRL=%s  Brent=%s)" % (ms_, mb, brl_d, brt_d))
+        if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
+            print("  [!] Macro contradice la direccion — BRL/Brent en contra")
+    if brazil:
+        a4_bias = brazil.get("bias", "NEUTRAL")
+        a4_sig  = brazil.get("signal_a4", 0)
+        print("  Brasil A4  : %s (A4=%+.2f)  %s" % (
+            a4_bias, a4_sig, brazil.get("description", "")))
+        if a4_bias != "NEUTRAL" and a4_bias != direction and direction != "NEUTRAL":
+            print("  [!] Señal Brasil contradice la direccion - revisar fundamental")
+    if santos_signal:
+        a5_bias = santos_signal.get("bias", "NEUTRAL")
+        a5_sig  = santos_signal.get("signal_a5", 0)
+        n_tot   = santos_signal.get("n_ships", 0)
+        z_val   = santos_signal.get("z_combined", 0)
+        print("  Santos A5  : %s (A5=%+.2f  z=%.2f  %d barcos ACUCAR)" % (
+            a5_bias, a5_sig, z_val, n_tot))
+        if a5_bias != "NEUTRAL" and a5_bias != direction and direction != "NEUTRAL":
+            print("  [!] Santos contradice la direccion - revisar flujo físico")
     # Gate preview: mostrar estado antes de pedir confirmacion
     if direction not in ("NEUTRAL", None):
         _gb, _gs, _gl, _gm = _vwap_gate(vwap_data, direction)
@@ -1061,6 +1375,13 @@ def run():
     print("=" * 72)
 
     confirmed_direction = ask_direction(direction)
+
+    # Recalcular macro con la dirección confirmada si difiere de la sugerida
+    if confirmed_direction not in ("NEUTRAL", None) and confirmed_direction != l1_dir_hint:
+        try:
+            macro = compute_macro_signals(confirmed_direction)
+        except Exception:
+            pass
 
     if confirmed_direction == "NEUTRAL":
         print("\n  NEUTRAL seleccionado. Sin trade hoy.")

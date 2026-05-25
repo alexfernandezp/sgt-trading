@@ -13,6 +13,7 @@ from database import SessionLocal
 from ingestion.prices import fetch_prices
 from ingestion.cot import fetch_cot
 from ingestion.intraday import fetch_intraday
+from ingestion.santos_port import fetch_santos_port
 
 
 def run():
@@ -35,6 +36,18 @@ def run():
         for instr, ivs in fetch_intraday(session).items():
             for iv, n in ivs.items():
                 logger.info(f"  {instr:<12} {iv:<5} {n} filas")
+
+        logger.info("Puerto de Santos — ship tracker (ACUCAR)...")
+        try:
+            santos = fetch_santos_port(session)
+            logger.info(f"  Expected(Long): {santos['n_expected']} barcos  {santos['tonnage_expected']} t")
+            logger.info(f"  Scheduled:      {santos['n_scheduled']} barcos")
+            logger.info(f"  Berthed:        {santos['n_berthed']} barcos  {santos['tonnage_berthed']} t cargando")
+            if santos["errors"]:
+                for err in santos["errors"]:
+                    logger.warning("  Santos error: %s", err)
+        except Exception as _e:
+            logger.warning("Santos port error (no critico): %s", _e)
 
     except Exception as exc:
         logger.error(f"Error: {exc}", exc_info=True)
