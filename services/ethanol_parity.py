@@ -62,43 +62,179 @@ PARITY_HIST_MEAN  = 0.9011 # media histórica (para referencia en display)
 PARITY_HIST_MED   = 0.8858 # mediana histórica
 
 
+def _get_cepea_history(session, days: int = 70) -> "pd.Series":
+    """Retorna Serie pandas (index=date, values=hydrous_usd_m3) últimos N días."""
+    try:
+        import pandas as pd
+        from sqlalchemy import text
+        from datetime import date, timedelta
+        cutoff = date.today() - timedelta(days=days)
+        rows = session.execute(text("""
+            SELECT price_date, price_usd FROM cepea_prices
+            WHERE series_name = 'hydrous_paulinia_usd_m3'
+              AND price_date >= :cutoff
+            ORDER BY price_date
+        """), {"cutoff": cutoff}).fetchall()
+        if not rows:
+            return pd.Series(dtype=float)
+        s = pd.Series(
+            {r[0]: float(r[1]) for r in rows if r[1] is not None}
+        )
+        s.index = pd.to_datetime(s.index)
+        return s
+    except Exception as e:
+        logger.warning("ethanol_parity _get_cepea_history: %s", e)
+        import pandas as pd
+        return pd.Series(dtype=float)
+
+
+def _get_ice_history_yf(days: int = 70) -> "pd.Series":
+    """Retorna Serie pandas (index=date, values=ice_c_lb) últimos N días de SB=F."""
+    try:
+        import pandas as pd
+        import yfinance as yf
+        df = yf.download("SB=F", period=f"{days}d", interval="1d",
+                         progress=False, auto_adjust=True)
+        if df is None or len(df) < 2:
+            return pd.Series(dtype=float)
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+        s = df["Close"].dropna()
+        s.index = pd.to_datetime(s.index)
+        return s.astype(float)
+    except Exception as e:
+        logger.warning("ethanol_parity _get_ice_history_yf: %s", e)
+        import pandas as pd
+        return pd.Series(dtype=float)
+
+
+def _compute_trend(result: dict, session, current_ratio: float) -> None:
+    """
+    Calcula tendencia del ratio a 2w/4w/8w y escribe campos en result in-place.
+    Usa ~10/20/40 días hábiles como proxy de 2/4/8 semanas.
+    """
+    try:
+        import pandas as pd
+        cepea_hist = _get_cepea_history(session, days=70)
+        ice_hist   = _get_ice_history_yf(days=70)
+
+        if cepea_hist.empty or ice_hist.empty:
+            return
+
+        # Alinear por fecha (join inner)
+        df = pd.DataFrame({"hydrous": cepea_hist, "ice": ice_hist}).dropna()
+        if len(df) < 12:
+            return
+
+        # Convertir hydrous a ratio usando mismos factores
+        df["ratio"] = (df["hydrous"] * 100 / (ATR_FACTOR * LBS_PER_TON)) / df["ice"]
+
+        # Valor del ratio N días hábiles atrás (aproximado como N-ésimo registro desde el final)
+        def ratio_n_ago(n: int):
+            """ratio n registros (días con datos) antes del último."""
+            if len(df) <= n:
+                return None
+            return float(df["ratio"].iloc[-(n + 1)])
+
+        r_2w = ratio_n_ago(10)  # ~2 semanas hábiles
+        r_4w = ratio_n_ago(20)  # ~4 semanas hábiles
+        r_8w = ratio_n_ago(40)  # ~8 semanas hábiles
+
+        result["ratio_2w_ago"] = round(r_2w, 4) if r_2w is not None else None
+        result["ratio_4w_ago"] = round(r_4w, 4) if r_4w is not None else None
+        result["ratio_8w_ago"] = round(r_8w, 4) if r_8w is not None else None
+
+        def pct_change(old):
+            if old is None or old == 0:
+                return None
+            return round((current_ratio - old) / abs(old) * 100, 2)
+
+        t2 = pct_change(r_2w)
+        t4 = pct_change(r_4w)
+        t8 = pct_change(r_8w)
+
+        result["trend_2w"] = t2
+        result["trend_4w"] = t4
+        result["trend_8w"] = t8
+
+        # Dirección dominante: usa tendencia de 4 semanas como referencia
+        ref = t4 if t4 is not None else t2
+        if ref is None:
+            result["trend_direction"] = "→"
+            result["trend_label"]     = "sin historial suficiente"
+            return
+
+        if ref > 2.0:
+            result["trend_direction"] = "↑"
+        elif ref < -2.0:
+            result["trend_direction"] = "↓"
+        else:
+            result["trend_direction"] = "→"
+
+        # Etiqueta descriptiva: aceleración vs desaceleración
+        bull_now  = current_ratio >= PARITY_BULLISH
+        bear_now  = current_ratio <= PARITY_BEARISH
+        going_up  = ref > 2.0
+        going_dn  = ref < -2.0
+
+        if bull_now and going_up:
+            label = "acelerando LONG"
+        elif bull_now and going_dn:
+            label = "LONG pero cediendo"
+        elif bear_now and going_dn:
+            label = "acelerando SHORT"
+        elif bear_now and going_up:
+            label = "SHORT pero recuperando"
+        elif going_up:
+            label = "mejorando hacia LONG"
+        elif going_dn:
+            label = "deteriorando hacia SHORT"
+        else:
+            label = "estable"
+
+        result["trend_label"] = label
+
+    except Exception as e:
+        logger.warning("ethanol_parity _compute_trend: %s", e)
+
+
 def compute_ethanol_parity(
     session,
     ice_price_c_lb: Optional[float] = None,
 ) -> dict:
     """
     Calcula la paridad etanol-azúcar usando los últimos precios CEPEA.
+    Incluye tendencia del ratio a 2w / 4w / 8w.
 
     Args:
         session        : SQLAlchemy session con acceso a cepea_prices
-        ice_price_c_lb : precio ICE No.11 en c/lb (opcional; si None se obtiene de yfinance)
+        ice_price_c_lb : precio ICE No.11 en c/lb (si None se obtiene de yfinance)
 
-    Returns dict con:
-        hydrous_usd_m3       : precio etanol hidratado Paulínia (US$/m³)
-        hydrous_date         : fecha del dato CEPEA
-        ethanol_usd_ton      : equivalente azúcar del etanol (US$/ton)
-        crystal_usd_ton      : precio azúcar cristal físico (US$/ton)
-        crystal_date         : fecha del dato CEPEA
-        ice_usd_ton          : precio ICE No.11 referencia (US$/ton)
-        ice_c_lb             : precio ICE No.11 (c/lb)
-        parity_ratio         : ethanol_usd_ton / ice_usd_ton
-        parity_ratio_physical: ethanol_usd_ton / crystal_usd_ton (azúcar físico vs etanol)
-        signal               : +1 (LONG) / -1 (SHORT) / 0 (NEUTRAL)
-        bias                 : "LONG" / "SHORT" / "NEUTRAL"
-        description          : texto interpretativo
+    Returns dict con todos los campos de paridad más:
+        trend_2w, trend_4w, trend_8w   : % cambio del ratio en esos períodos
+        trend_direction                 : "↑" / "↓" / "→"
+        ratio_2w_ago, ratio_4w_ago     : valores históricos del ratio
     """
     result = {
         "hydrous_usd_m3":        None,
         "hydrous_date":          None,
         "ethanol_usd_ton":       None,
-        "ethanol_c_lb":          None,   # etanol expresado en c/lb azúcar equivalente
-        "spread_c_lb":           None,   # ethanol_c_lb − ice_c_lb (prima en c/lb)
+        "ethanol_c_lb":          None,
+        "spread_c_lb":           None,
         "crystal_usd_ton":       None,
         "crystal_date":          None,
         "ice_usd_ton":           None,
         "ice_c_lb":              None,
         "parity_ratio":          None,
         "parity_ratio_physical": None,
+        # Tendencia del ratio
+        "ratio_2w_ago":          None,
+        "ratio_4w_ago":          None,
+        "ratio_8w_ago":          None,
+        "trend_2w":              None,   # % cambio últimas 2 semanas
+        "trend_4w":              None,   # % cambio últimas 4 semanas
+        "trend_8w":              None,   # % cambio últimas 8 semanas
+        "trend_direction":       None,   # "↑" / "↓" / "→"
+        "trend_label":           None,   # "acelerando LONG", "desacelerando", etc.
         "signal":                0,
         "bias":                  "NEUTRAL",
         "description":           "Paridad etanol: sin datos CEPEA",
@@ -162,6 +298,8 @@ def compute_ethanol_parity(
         result["spread_c_lb"]  = round(ethanol_c_lb - ice_price_c_lb, 4) if ice_price_c_lb else None
 
         if parity_ratio is not None:
+            _compute_trend(result, session, parity_ratio)
+
             # Percentil aproximado para display (referencia histórica)
             if parity_ratio >= 1.093:
                 pct_str = ">P85"

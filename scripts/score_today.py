@@ -22,6 +22,7 @@ from services.brazil_signal import compute_brazil_signal
 from services.macro_signals import compute_macro_signals
 from services.options_surface import get_vol_surface_for_score
 from services.santos_signal import compute_santos_signal
+from services.paranagua_signal import compute_paranagua_signal
 from ingestion.santos_port import get_latest_snapshot
 from ingestion.intraday import fetch_intraday
 from ingestion.options import score_options, get_latest_files
@@ -813,20 +814,22 @@ def print_macro_signals(macro, direction):
     bias_tag = bias_map.get(bias, "[%s]" % bias)
 
     print()
-    print("  -- MACRO (BRL/USD + Brent + correlación + paridad etanol) --")
-    print("  Score macro: %+d / 4   %s   (dirección: %s)" % (score, bias_tag, direction))
+    print("  -- MACRO (BRL/USD + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego) --")
+    print("  Score macro: %+d / 9   %s   (dirección: %s)" % (score, bias_tag, direction))
 
-    # BRL/USD
-    brl_p = brl.get("brl_per_usd")
-    brl_b = brl.get("bias", "NEUTRAL")
+    # BRL/USD — brl_per_usd = USDBRL ≈ 5.0 (quote mercado), usd_per_brl ≈ 0.20
+    brl_q  = brl.get("brl_per_usd")   # cuántos BRL por 1 USD (≈5.0)
+    brl_u  = brl.get("usd_per_brl")   # cuántos USD por 1 BRL (≈0.20)
+    brl_b  = brl.get("bias", "NEUTRAL")
     brl_ma = brl.get("vs_ma20_pct")
     brl_1d = brl.get("change_1d_pct")
-    if brl_p:
+    if brl_q:
         brl_ma_s = ("%+.1f%% vs MA20" % brl_ma) if brl_ma is not None else ""
-        print("  BRL/USD : %.4f USD/BRL  (%.4f BRL/USD)  %s  1d=%+.2f%%  [%s]" % (
-            brl.get("usd_per_brl", 0), brl_p, brl_ma_s, brl_1d or 0, brl_b))
+        brl_u_s  = ("  (%.5f USD/BRL)" % brl_u) if brl_u else ""
+        print("  USDBRL  : %.4f BRL/USD%s  %s  1d=%+.2f%%  [%s]" % (
+            brl_q, brl_u_s, brl_ma_s, brl_1d or 0, brl_b))
     else:
-        print("  BRL/USD : sin datos")
+        print("  USDBRL  : sin datos")
 
     # Brent
     bp = brent.get("brent_price")
@@ -853,23 +856,118 @@ def print_macro_signals(macro, direction):
     else:
         print("  Correl  : sin datos 5m")
 
-    # Paridad etanol-azúcar (CEPEA)
+    # Paridad etanol-azúcar (CEPEA) — expresada en c/lb para comparar con ICE
     parity = macro.get("parity", {})
-    pr = parity.get("parity_ratio")
-    phys = parity.get("parity_ratio_physical")
-    hy  = parity.get("hydrous_usd_m3")
-    hd  = parity.get("hydrous_date", "?")
-    icu = parity.get("ice_usd_ton")
-    cru = parity.get("crystal_usd_ton")
-    pb  = parity.get("bias", "NEUTRAL")
+    hy    = parity.get("hydrous_usd_m3")
+    hd    = parity.get("hydrous_date", "?")
+    ec_lb = parity.get("ethanol_c_lb")
+    ic_lb = parity.get("ice_c_lb")
+    sp_lb = parity.get("spread_c_lb")
+    pr    = parity.get("parity_ratio")
+    phys  = parity.get("parity_ratio_physical")
+    pb    = parity.get("bias", "NEUTRAL")
     if hy is not None:
-        hy_s  = "Etanol=%s US$/m³(%s)" % (hy, hd)
-        icu_s = ("  ICE=%s US$/t" % icu)   if icu  is not None else ""
-        cru_s = ("  Cristal=%s US$/t" % cru) if cru is not None else ""
-        pr_s  = ("  ratio=%.3f" % pr)      if pr   is not None else (("  ratio_fis=%.3f" % phys) if phys else "")
-        print("  Paridad : %s%s%s%s  [%s]" % (hy_s, icu_s, cru_s, pr_s, pb))
+        hy_s  = "Etanol=%.2f US$/m³(%s)" % (hy, hd)
+        ec_s  = ("  equiv=%.4f c/lb" % ec_lb)      if ec_lb is not None else ""
+        ic_s  = ("  ICE=%.4f c/lb"   % ic_lb)      if ic_lb is not None else ""
+        sp_s  = ("  spread=%+.4f c/lb" % sp_lb)    if sp_lb is not None else ""
+        pr_s  = ("  ratio=%.3f"       % pr)         if pr    is not None else (("  ratio_fis=%.3f" % phys) if phys else "")
+        print("  Paridad : %s%s%s%s%s  [%s]" % (hy_s, ec_s, ic_s, sp_s, pr_s, pb))
+        # Tendencia del ratio
+        t2  = parity.get("trend_2w")
+        t4  = parity.get("trend_4w")
+        t8  = parity.get("trend_8w")
+        tdir = parity.get("trend_direction", "")
+        tlbl = parity.get("trend_label", "")
+        r2  = parity.get("ratio_2w_ago")
+        r4  = parity.get("ratio_4w_ago")
+        if t2 is not None or t4 is not None:
+            t2_s = ("%+.1f%%" % t2) if t2 is not None else "N/D"
+            t4_s = ("%+.1f%%" % t4) if t4 is not None else "N/D"
+            t8_s = ("%+.1f%%" % t8) if t8 is not None else "N/D"
+            r2_s = ("ratio_2w=%.3f" % r2) if r2 is not None else ""
+            r4_s = ("ratio_4w=%.3f" % r4) if r4 is not None else ""
+            print("  Tendencia: %s 2w=%s  4w=%s  8w=%s   %s  %s   %s" % (
+                tdir, t2_s, t4_s, t8_s,
+                r2_s, r4_s, tlbl))
     else:
         print("  Paridad : sin datos CEPEA (ejecutar fetch_cepea)")
+
+    # ── ENSO / ONI ─────────────────────────────────────────────────────────
+    enso  = macro.get("enso", {})
+    oni   = enso.get("oni_value")
+    seas  = enso.get("season", "?")
+    yr_e  = enso.get("year", "?")
+    cls_e = enso.get("classification", "")
+    eb    = enso.get("bias", "NEUTRAL")
+    if oni is not None:
+        lag_s = ("  [%s]" % enso["lag_note"]) if enso.get("lag_note") else ""
+        print("  ENSO    : ONI=%+.2f %s %s [%s]  [%s]%s" % (oni, seas, yr_e, cls_e, eb, lag_s))
+    else:
+        print("  ENSO    : sin datos ONI (py scripts/daily_pipeline.py)")
+
+    # ── Déficit hídrico + NDVI ──────────────────────────────────────────────
+    clim  = macro.get("climate", {})
+    d30   = clim.get("deficit_30d")
+    d90   = clim.get("deficit_90d")
+    ndvi  = clim.get("ndvi")
+    cldt  = clim.get("latest_date", "?")
+    clb   = clim.get("bias", "NEUTRAL")
+    ndvc  = clim.get("ndvi_confirms", False)
+    if d90 is not None:
+        nd_s  = ("  NDVI=%s%.3f%s" % (
+            "*" if ndvc else "", ndvi, "*" if ndvc else "")) if ndvi is not None else ""
+        print("  Clima   : 90d=%+.0fmm  30d=%+.0fmm  (%s)%s  [%s]" % (d90, d30 or 0, cldt, nd_s, clb))
+    else:
+        print("  Clima   : sin datos hídricos (py scripts/daily_pipeline.py)")
+
+    # ── Full Carry calendar spread ──────────────────────────────────────────
+    carr  = macro.get("carry", {})
+    spr   = carr.get("spread_c_lb")
+    fc    = carr.get("full_carry_clb")
+    crat  = carr.get("carry_ratio")
+    cpct  = carr.get("carry_pct_str", "")
+    cb    = carr.get("bias", "NEUTRAL")
+    sofr  = carr.get("sofr_pct")
+    if spr is not None and fc is not None:
+        sofr_s = ("  SOFR=%.2f%%" % sofr) if sofr else ""
+        print("  Carry   : spread=%+.4fc/lb  full_carry=%.4fc/lb  %s%s  [%s]" % (
+            spr, fc, cpct, sofr_s, cb))
+
+    # ── Comex Stat — exportaciones YoY ─────────────────────────────────────
+    comex  = macro.get("comex", {})
+    yoy    = comex.get("yoy_change_pct")
+    ytd_c  = comex.get("ytd_curr_t")     # toneladas (PDF) o kg (DB)
+    ytd_p  = comex.get("ytd_prev_t")
+    period = comex.get("latest_period")
+    cxb    = comex.get("bias", "NEUTRAL")
+    if yoy is not None:
+        def _fmt_t(v):
+            if v is None: return "?"
+            if v > 1e9: return "%.1fM t" % (v / 1e9)   # en kg desde DB
+            return "%.0f kt" % (v / 1e3)                # en toneladas desde PDF
+        print("  Comex   : YoY=%+.1f%%  YTD=%s vs %s  (%s)  [%s]" % (
+            yoy, _fmt_t(ytd_c), _fmt_t(ytd_p), period or "?", cxb))
+    else:
+        print("  Comex   : sin datos (ejecutar fetch_comex_stat)")
+
+    # ── INPE fuego — anomalía focos incendio SP+PR ──────────────────────────
+    fire  = macro.get("fire", {})
+    fz    = fire.get("z_score")
+    fcurr = fire.get("current_total")
+    fmean = fire.get("baseline_mean")
+    fstd  = fire.get("baseline_std")
+    fmo   = fire.get("month")
+    fb    = fire.get("bias", "NEUTRAL")
+    fst   = fire.get("state", "SP+PR")
+    if fz is not None:
+        MONTH_NAMES = {5:"May", 6:"Jun", 7:"Jul", 8:"Ago", 9:"Sep", 10:"Oct",
+                      11:"Nov", 12:"Dic", 1:"Ene", 2:"Feb", 3:"Mar", 4:"Abr"}
+        fmo_s = MONTH_NAMES.get(fmo, str(fmo)) if fmo else "?"
+        print("  Fuego %s : focos=%d  z=%+.2f  baseline=%.0f±%.0f (%s)  [%s]" % (
+            fst, fcurr or 0, fz, fmean or 0, fstd or 0, fmo_s, fb))
+    else:
+        print("  Fuego SP+PR: sin datos (ejecutar fetch_fires)")
 
 
 # ── Vol surface display ───────────────────────────────────────────────────────
@@ -996,9 +1094,84 @@ def print_santos_signal(santos, snap):
         if z is not None:
             print("  Z-score  : %.2f  (media30d: %.1f barcos, %.0f t)" % (
                 z, ms or 0, mt or 0))
+
+        # Velocidad de carga
+        vel    = santos.get("velocity_ratio")
+        vel_m  = santos.get("velocity_ratio_mean")
+        z_vel  = santos.get("z_velocity")
+        delta  = santos.get("queue_delta_7d")
+        z_del  = santos.get("z_queue_delta")
+        if vel is not None:
+            vel_label = ""
+            if z_vel is not None:
+                if z_vel < -0.5:
+                    vel_label = "  ↑ BOTTLENECK (ratio bajo = barcos varados)"
+                elif z_vel > 0.5:
+                    vel_label = "  ↓ flujo libre"
+            delta_s = ("  Δ7d_exp=%+d barcos" % delta) if delta is not None else ""
+            print("  Velocidad : cargando=%.0f%%  media30d=%.0f%%  z_vel=%.2f%s%s" % (
+                vel * 100, (vel_m or 0) * 100, z_vel or 0, delta_s, vel_label))
     else:
         print()
         print("  A5: historial insuficiente (<5 días) — informativo solo")
+
+
+# ── Paranaguá port display ────────────────────────────────────────────────────
+
+def print_paranagua_signal(paranagua):
+    """Muestra señal A6 — cola de exportación de azúcar en Paranaguá."""
+    print()
+    print("  -- A6 PUERTO DE PARANAGUÁ (cola exportación azúcar) --")
+
+    if paranagua is None:
+        print("  Sin datos — ejecutar: from ingestion.paranagua_port import fetch_paranagua_port")
+        return
+
+    n_atr = paranagua.get("n_atracados", 0)
+    n_pro = paranagua.get("n_programados", 0)
+    n_lar = paranagua.get("n_ao_largo", 0)
+    n_esp = paranagua.get("n_esperados", 0)
+    n_act = paranagua.get("n_active", n_atr + n_pro + n_lar + n_esp)
+    snap_dt = paranagua.get("snapshot_date", "?")
+
+    print("  Atracados : %d   Programados: %d   Ao largo: %d   Esperados: %d   Total: %d" % (
+        n_atr, n_pro, n_lar, n_esp, n_act))
+    print("  Snapshot  : %s" % snap_dt)
+
+    sig   = paranagua.get("signal_a6", 0)
+    bias  = paranagua.get("bias", "NEUTRAL")
+    z     = paranagua.get("z_combined")
+    z_lev = paranagua.get("z_level")
+
+    if z is not None:
+        bias_tag = {"LONG": "[LONG  alcista]", "SHORT": "[SHORT bajista]",
+                    "NEUTRAL": "[NEUTRAL]"}.get(bias, bias)
+        bar_pos = int((sig + 1) / 2 * 20)
+        bar_str = "[" + "-" * max(0, bar_pos - 1) + "|" + "-" * max(0, 19 - bar_pos) + "]"
+        print()
+        print("  A6 Paranaguá: %+.2f   %s" % (sig, bias_tag))
+        print("  Escala      : -1.0 %s +1.0" % bar_str)
+        mean_act = paranagua.get("mean_active")
+        if mean_act is not None:
+            print("  Z-nivel     : %.2f  (media30d: %.1f barcos activos)" % (z_lev or 0, mean_act))
+
+        vel   = paranagua.get("velocity_ratio")
+        vel_m = paranagua.get("velocity_ratio_mean")
+        z_vel = paranagua.get("z_velocity")
+        dwell = paranagua.get("dwell_days")
+        if vel is not None:
+            vel_label = ""
+            if z_vel is not None:
+                if z_vel < -0.5:
+                    vel_label = "  ↑ BOTTLENECK"
+                elif z_vel > 0.5:
+                    vel_label = "  ↓ flujo libre"
+            dwell_s = ("  dwell=%.1fd" % dwell) if dwell is not None else ""
+            print("  Velocidad   : atracando=%.0f%%  media30d=%.0f%%  z_vel=%.2f%s%s" % (
+                vel * 100, (vel_m or 0) * 100, z_vel or 0, dwell_s, vel_label))
+    else:
+        print()
+        print("  A6: historial insuficiente (<5 días) — informativo solo")
 
 
 # ── Market structure display ──────────────────────────────────────────────────
@@ -1276,6 +1449,14 @@ def run():
         santos_signal = None
     print_santos_signal(santos_signal, santos_snap)
 
+    # A6: cola de exportación azúcar en Puerto de Paranaguá
+    try:
+        paranagua_signal = compute_paranagua_signal(session)
+    except Exception as e:
+        logger.debug("paranagua_signal error: %s", e)
+        paranagua_signal = None
+    print_paranagua_signal(paranagua_signal)
+
     # [2] Layer 2: VP + VWAP + señales auto
     print("\n[2/5] CAPA 2 - Ejecucion intradiaria (VP + VWAP + swing + volumen)...")
     try:
@@ -1371,11 +1552,17 @@ def run():
         ms_   = macro.get("macro_score", 0)
         brl_d = macro.get("brl",    {}).get("bias", "N/D")
         brt_d = macro.get("brent",  {}).get("bias", "N/D")
-        par_d = macro.get("parity", {}).get("bias", "N/D")
-        pr_v  = macro.get("parity", {}).get("parity_ratio")
-        pr_s  = ("  ratio=%.3f" % pr_v) if pr_v is not None else ""
-        print("  Macro      : score=%+d/4  bias=%s  (BRL=%s  Brent=%s  Paridad=%s%s)" % (
-            ms_, mb, brl_d, brt_d, par_d, pr_s))
+        par_d  = macro.get("parity", {}).get("bias", "N/D")
+        sp_v   = macro.get("parity", {}).get("spread_c_lb")
+        ec_v   = macro.get("parity", {}).get("ethanol_c_lb")
+        ic_v   = macro.get("parity", {}).get("ice_c_lb")
+        sp_s   = ("  etanol=%.2fc/lb  ICE=%.2fc/lb  spread=%+.2fc/lb" % (ec_v, ic_v, sp_v)) if sp_v is not None else ""
+        enso_d = macro.get("enso",    {}).get("bias", "N/D")
+        clim_d = macro.get("climate", {}).get("bias", "N/D")
+        carr_d = macro.get("carry",   {}).get("bias", "N/D")
+        print("  Macro      : score=%+d/7  bias=%s" % (ms_, mb))
+        print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
+            brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
             print("  [!] Macro contradice la direccion — BRL/Brent/Paridad en contra")
     if brazil:

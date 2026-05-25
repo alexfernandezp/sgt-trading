@@ -39,3 +39,22 @@ DATABENTO_API_KEY  = os.getenv("DATABENTO_API_KEY", "")
 
 CFTC_API_URL       = "https://publicreporting.cftc.gov/resource/j83k-qyrd.json"
 CFTC_SUGAR_MARKET  = "SUGAR NO. 11 - ICE FUTURES U.S."
+
+# ── Google Earth Engine ───────────────────────────────────────────────────────
+GEE_PROJECT_ID     = os.getenv("GEE_PROJECT_ID", "")
+
+# ── Climate / ENSO ────────────────────────────────────────────────────────────
+# Estaciones cinturón azucarero São Paulo para Open-Meteo
+CLIMATE_STATIONS = [
+    {"name": "ribeirao_preto", "lat": -21.1767, "lon": -47.8208},
+    {"name": "piracicaba",     "lat": -22.7253, "lon": -47.6492},
+]
+
+# ICE Sugar No.11 — coste económico total de almacenamiento (full carry real)
+# ICE Rule 11.20 almacén certificado: $0.0202/MT/día (warehouse fee puro)
+# + seguro (~$0.2/ton/año) + deterioro calidad + operativa ≈ $0.037/MT/día
+# Los operadores comerciales usan este valor total, no solo la tasa ICE listada
+ICE_STORAGE_USD_TON_DAY = float(os.getenv("ICE_STORAGE_USD_TON_DAY", "0.037"))
+
+# SOFR rate por defecto (actualizar trimestralmente o via FRED fetch)
+SOFR_DEFAULT_PCT        = float(os.getenv("SOFR_DEFAULT_PCT", "4.30"))

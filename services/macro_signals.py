@@ -72,6 +72,44 @@ def _fetch_daily(ticker: str, period: str = "60d") -> Optional[pd.DataFrame]:
         return None
 
 
+def _fetch_last_price(ticker: str) -> Optional[float]:
+    """
+    Precio más reciente del ticker, en orden de preferencia:
+      1. yfinance fast_info  (cuasi-tiempo-real)
+      2. yfinance intraday 1m / 5m
+    Retorna None si el mercado está cerrado o sin datos intraday.
+    """
+    try:
+        import yfinance as yf
+
+        # 1. fast_info — el más actual en días normales
+        try:
+            fi = yf.Ticker(ticker).fast_info
+            price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
+            if price and float(price) > 0:
+                return float(price)
+        except Exception:
+            pass
+
+        # 2. Intraday 1m / 5m
+        for iv in ("1m", "5m"):
+            try:
+                df = yf.download(ticker, period="1d", interval=iv,
+                                 progress=False, auto_adjust=True)
+                if df is not None and not df.empty:
+                    df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+                    val = df["Close"].dropna()
+                    if len(val) > 0:
+                        return float(val.iloc[-1])
+            except Exception:
+                continue
+
+    except Exception as e:
+        logger.debug("fetch_last_price %s: %s", ticker, e)
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # BRL / USD signal
 # ---------------------------------------------------------------------------
@@ -80,56 +118,58 @@ def compute_brl_signal(price: Optional[float] = None) -> dict:
     """
     Señal BRL/USD.
 
+    NOTA: Yahoo Finance BRL=X devuelve USDBRL (BRL por dólar, ≈5.0).
+    Cuando USDBRL SUBE → BRL se DEBILITA → bajista para azúcar (productores BR venden
+    más barato en USD) → SHORT.  Cuando USDBRL BAJA → BRL se FORTALECE → LONG.
+
     Devuelve:
-      brl_usd      : precio actual USD/BRL (cuantos BRL vale 1 USD)
-      usd_brl      : inverso (cuantos dólares vale 1 BRL)
-      signal       : +1 (alcista azucar) / -1 (bajista) / 0 (neutral)
-      change_1d_pct: variacion % en 1 dia
-      change_5d_pct: variacion % en 5 dias
-      bias         : "LONG" / "SHORT" / "NEUTRAL"
-      description  : texto
+      brl_per_usd  : BRL por dólar (quote de mercado, ≈5.0)
+      usd_per_brl  : USD por BRL (inverso, ≈0.20)
+      signal       : +1 LONG / -1 SHORT / 0 neutral
+      change_1d_pct, change_5d_pct, vs_ma20_pct
+      bias, description
     """
     df = _fetch_daily(TICKER_BRL, period="30d")
 
     if df is None or len(df) < 5:
-        return {"signal": 0, "bias": "NEUTRAL", "brl_usd": None,
+        return {"signal": 0, "bias": "NEUTRAL", "brl_per_usd": None,
                 "description": "BRL/USD: sin datos"}
 
-    # BRL=X es USD/BRL (cuantos USD vale 1 BRL)
-    # Si BRL=X sube → BRL se fortalece → señal LONG azúcar
-    latest   = float(df["Close"].iloc[-1])
-    prev1d   = float(df["Close"].iloc[-2])   if len(df) >= 2  else latest
-    prev5d   = float(df["Close"].iloc[-6])   if len(df) >= 6  else latest
-    ma20     = float(df["Close"].tail(20).mean())
+    # BRL=X de Yahoo Finance = USDBRL ≈ 5.0 (cuántos BRL cuesta 1 USD)
+    latest = float(df["Close"].iloc[-1])
+    prev1d = float(df["Close"].iloc[-2]) if len(df) >= 2 else latest
+    prev5d = float(df["Close"].iloc[-6]) if len(df) >= 6 else latest
+    ma20   = float(df["Close"].tail(20).mean())
 
-    chg_1d = (latest - prev1d) / prev1d * 100
-    chg_5d = (latest - prev5d) / prev5d * 100
+    chg_1d  = (latest - prev1d) / prev1d * 100
+    chg_5d  = (latest - prev5d) / prev5d * 100
     vs_ma20 = (latest - ma20) / ma20 * 100
 
-    # BRL/USD sube = BRL se fortalece = alcista para azúcar (más costoso producir en USD)
-    # BRL/USD baja = BRL se debilita = bajista para azúcar
-    if vs_ma20 > 1.5 and chg_5d > 1.0:
+    # USDBRL baja (BRL se fortalece) → productores necesitan más USD → soporte precio → LONG
+    # USDBRL sube (BRL se debilita) → productores venden más barato en USD → presión bajista → SHORT
+    if vs_ma20 < -1.5 and chg_5d < -1.0:
         signal = 1; bias = "LONG"
-        desc = f"BRL fuerte: {latest:.4f} USD/BRL (+{vs_ma20:.1f}% vs MA20) → presión alcista azucar"
-    elif vs_ma20 < -1.5 and chg_5d < -1.0:
+        desc = (f"BRL fuerte: USDBRL={latest:.4f} ({vs_ma20:+.1f}% vs MA20) "
+                f"→ costes producción suben en USD → alcista azúcar")
+    elif vs_ma20 > 1.5 and chg_5d > 1.0:
         signal = -1; bias = "SHORT"
-        desc = f"BRL débil: {latest:.4f} USD/BRL ({vs_ma20:.1f}% vs MA20) → presión bajista azucar"
+        desc = (f"BRL débil: USDBRL={latest:.4f} ({vs_ma20:+.1f}% vs MA20) "
+                f"→ productores BR venden más barato en USD → bajista azúcar")
     else:
         signal = 0; bias = "NEUTRAL"
-        desc = f"BRL neutral: {latest:.4f} USD/BRL ({vs_ma20:+.1f}% vs MA20)"
+        desc = f"BRL neutral: USDBRL={latest:.4f} ({vs_ma20:+.1f}% vs MA20)"
 
-    # En términos de BRL por USD (lo que el mercado suele citar)
-    brl_per_usd = round(1 / latest, 4) if latest > 0 else None
+    usd_per_brl = round(1.0 / latest, 5) if latest > 0 else None
 
     return {
-        "usd_per_brl":    round(latest, 5),
-        "brl_per_usd":    brl_per_usd,
-        "change_1d_pct":  round(chg_1d, 3),
-        "change_5d_pct":  round(chg_5d, 3),
-        "vs_ma20_pct":    round(vs_ma20, 3),
-        "signal":         signal,
-        "bias":           bias,
-        "description":    desc,
+        "brl_per_usd":   round(latest, 4),       # cuántos BRL por 1 USD (≈5.0)
+        "usd_per_brl":   usd_per_brl,             # cuántos USD por 1 BRL (≈0.20)
+        "change_1d_pct": round(chg_1d, 3),
+        "change_5d_pct": round(chg_5d, 3),
+        "vs_ma20_pct":   round(vs_ma20, 3),
+        "signal":        signal,
+        "bias":          bias,
+        "description":   desc,
     }
 
 
@@ -154,10 +194,16 @@ def compute_brent_signal() -> dict:
         return {"signal": 0, "bias": "NEUTRAL", "brent_price": None,
                 "description": "Brent: sin datos"}
 
-    latest  = float(df["Close"].iloc[-1])
-    prev1d  = float(df["Close"].iloc[-2]) if len(df) >= 2 else latest
-    prev5d  = float(df["Close"].iloc[-6]) if len(df) >= 6 else latest
-    ma20    = float(df["Close"].tail(20).mean())
+    # Precio fresco intraday (5m); la barra diaria puede estar atrasada horas
+    latest_intraday = _fetch_last_price(TICKER_BRENT)
+    latest = latest_intraday if latest_intraday is not None else float(df["Close"].iloc[-1])
+
+    # Cierre de la sesión anterior (último daily completado)
+    # yfinance incluye barra parcial de hoy en iloc[-1] → iloc[-2] = cierre previo real
+    n = len(df)
+    prev1d = float(df["Close"].iloc[-2]) if n >= 2 else latest
+    prev5d = float(df["Close"].iloc[-6]) if n >= 6 else latest
+    ma20   = float(df["Close"].tail(20).mean())
 
     chg_1d = (latest - prev1d) / prev1d * 100
     chg_5d = (latest - prev5d) / prev5d * 100
@@ -315,11 +361,26 @@ def compute_intraday_correlation(direction: str = "LONG") -> dict:
 
 def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     """
-    Combina BRL, Brent, correlacion intraday y paridad etanol-azúcar.
+    Combina 9 señales macro para azúcar ICE No.11.
 
-    Devuelve dict con todos los sub-signals y un macro_score (-4 a +4).
-    La paridad etanol (CEPEA) es el indicador fundamental más directo del
-    mix mills Brasil; Brent es el confirmador macro secundario.
+    Señales incluidas:
+      1. BRL/USD          — tipo de cambio real brasileño
+      2. Brent            — paridad etanol/energía
+      3. Correl intraday  — correlaciones 5m Brent/BRL vs SB
+      4. Paridad etanol   — CEPEA hydrous vs ICE (fundamental mills Brasil)
+      5. ENSO / ONI       — El Niño/La Niña: impacto estacional producción
+      6. Déficit hídrico  — P-ET30/90d SP + NDVI Sentinel-2
+      7. Full Carry       — spread SBN/SBV vs coste teórico de almacenamiento
+      8. Comex Stat       — ritmo exportaciones YoY azúcar Brasil (MDIC)
+      9. INPE Fuego       — anomalía focos incendio SP vs baseline estacional
+
+    macro_score: −9 a +9
+    Thresholds bias:
+      ≥ 7  → STRONG direction  (≥78% señales alineadas)
+      ≥ 3  → direction
+      ≤ −3 → CONTRA
+      ≤ −7 → STRONG_CONTRA
+      else → NEUTRAL
     """
     brl   = compute_brl_signal()
     brent = compute_brent_signal()
@@ -331,28 +392,84 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     if session is not None:
         try:
             from services.ethanol_parity import compute_ethanol_parity
-            ice_c_lb = brent.get("_ice_c_lb")   # None → yf internamente
-            parity = compute_ethanol_parity(session, ice_price_c_lb=ice_c_lb)
+            parity = compute_ethanol_parity(session)
         except Exception as e:
             logger.warning("macro_signals: parity error: %s", e)
 
-    # Score: cada sub-señal aporta -1/0/+1 ajustado por direccion
+    # ENSO / ONI signal
+    enso = {"signal": 0, "bias": "NEUTRAL",
+             "description": "ENSO: sin datos (ejecutar fetch_oni)"}
+    if session is not None:
+        try:
+            from services.enso_signal import compute_enso_signal
+            enso = compute_enso_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: enso error: %s", e)
+
+    # Déficit hídrico + NDVI
+    climate = {"signal": 0, "bias": "NEUTRAL",
+                "description": "Déficit hídrico: sin datos (ejecutar fetch_climate)"}
+    if session is not None:
+        try:
+            from services.water_deficit import compute_water_deficit_signal
+            climate = compute_water_deficit_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: water_deficit error: %s", e)
+
+    # Full Carry calendar spread (no requiere session — usa yfinance)
+    carry = {"signal": 0, "bias": "NEUTRAL",
+              "description": "Full Carry: sin datos"}
+    try:
+        from services.full_carry import compute_full_carry_signal
+        carry = compute_full_carry_signal()
+    except Exception as e:
+        logger.warning("macro_signals: full_carry error: %s", e)
+
+    # Comex Stat — ritmo exportaciones YoY
+    comex = {"signal": 0, "bias": "NEUTRAL",
+             "description": "Comex Stat: sin datos (ejecutar fetch_comex_stat)"}
+    if session is not None:
+        try:
+            from services.comex_signal import compute_comex_signal
+            comex = compute_comex_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: comex error: %s", e)
+
+    # INPE fuego — anomalía focos incendio SP
+    fire = {"signal": 0, "bias": "NEUTRAL",
+            "description": "INPE fuego: sin datos (ejecutar fetch_fires)"}
+    if session is not None:
+        try:
+            from services.fire_signal import compute_fire_signal
+            fire = compute_fire_signal(session, state="SP+PR")
+        except Exception as e:
+            logger.warning("macro_signals: fire error: %s", e)
+
+    # ── Scoring ──────────────────────────────────────────────────────────────
     dir_mult = 1 if direction.upper() == "LONG" else -1
 
-    score_brl    = brl["signal"]    * dir_mult
-    score_brent  = brent["signal"]  * dir_mult
-    score_corr   = corr["signal"]               # ya ajustado por direction
-    score_parity = parity["signal"] * dir_mult  # +1 = confirma direccion
+    score_brl     = brl["signal"]     * dir_mult
+    score_brent   = brent["signal"]   * dir_mult
+    score_corr    = corr["signal"]                  # ya ajustado por direction internamente
+    score_parity  = parity["signal"]  * dir_mult
+    score_enso    = enso["signal"]    * dir_mult
+    score_climate = climate["signal"] * dir_mult
+    score_carry   = carry["signal"]   * dir_mult
+    score_comex   = comex["signal"]   * dir_mult
+    score_fire    = fire["signal"]    * dir_mult
 
-    macro_score = score_brl + score_brent + score_corr + score_parity   # -4 a +4
+    macro_score = (score_brl + score_brent + score_corr + score_parity
+                   + score_enso + score_climate + score_carry
+                   + score_comex + score_fire)   # −9 a +9
 
-    if macro_score >= 3:
+    # Thresholds escalados al rango ±9
+    if macro_score >= 7:
         macro_bias = "STRONG_" + direction.upper()
-    elif macro_score >= 1:
+    elif macro_score >= 3:
         macro_bias = direction.upper()
-    elif macro_score <= -3:
+    elif macro_score <= -7:
         macro_bias = "STRONG_CONTRA"
-    elif macro_score <= -1:
+    elif macro_score <= -3:
         macro_bias = "CONTRA"
     else:
         macro_bias = "NEUTRAL"
@@ -362,6 +479,11 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         "brent":       brent,
         "corr":        corr,
         "parity":      parity,
+        "enso":        enso,
+        "climate":     climate,
+        "carry":       carry,
+        "comex":       comex,
+        "fire":        fire,
         "macro_score": macro_score,
         "macro_bias":  macro_bias,
         "direction":   direction.upper(),

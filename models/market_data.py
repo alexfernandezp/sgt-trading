@@ -205,3 +205,130 @@ class CalendarEvent(Base):
     previous_value = Column(String(50))
     is_confirmed   = Column(String(5), default="true")
     created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class OniIndex(Base):
+    """
+    Índice ONI (Oceanic Niño Index) de NOAA/CPC.
+    Media móvil 3 meses de anomalía SST en región Niño 3.4.
+    Fuente: https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt
+    """
+    __tablename__ = "oni_index"
+    id             = Column(Integer, primary_key=True)
+    obs_date       = Column(Date, nullable=False)      # 1er día del mes central
+    season         = Column(String(3), nullable=False)  # DJF, JFM … NDJ
+    year           = Column(Integer, nullable=False)
+    month          = Column(Integer, nullable=False)    # mes central (1-12)
+    oni_value      = Column(Numeric(5, 2))              # anomalía temperatura (°C)
+    classification = Column(String(30))                 # VERY_STRONG_NINO, STRONG_NINO, etc.
+    source         = Column(String(50), default="noaa_cpc")
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("year", "month", name="uq_oni_year_month"),)
+
+
+class ClimateDaily(Base):
+    """
+    Datos climáticos diarios por estación — Open-Meteo ERA5.
+    Estaciones clave: ribeirão preto, piracicaba (cinturón azucarero SP).
+    Fuente: archive-api.open-meteo.com (ERA5 reanalysis, lag ~5 días)
+    """
+    __tablename__  = "climate_daily"
+    id             = Column(Integer, primary_key=True)
+    obs_date       = Column(Date, nullable=False)
+    station_name   = Column(String(50), nullable=False)  # 'ribeirao_preto' | 'piracicaba'
+    latitude       = Column(Numeric(8, 4))
+    longitude      = Column(Numeric(8, 4))
+    precip_mm      = Column(Numeric(8, 2))    # precipitación diaria (mm)
+    et0_mm         = Column(Numeric(8, 2))    # ET0 FAO-56 Penman-Monteith (mm)
+    temp_max_c     = Column(Numeric(6, 2))    # temperatura máxima (°C)
+    temp_min_c     = Column(Numeric(6, 2))    # temperatura mínima (°C)
+    soil_moisture  = Column(Numeric(8, 5))    # humedad suelo 0-7 cm (m³/m³)
+    source         = Column(String(30), default="open_meteo_era5")
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("obs_date", "station_name", name="uq_climate_date_station"),)
+
+
+class NdviSentinel(Base):
+    """
+    NDVI medio semanal del cinturón azucarero São Paulo.
+    Calculado sobre imágenes Sentinel-2 via Google Earth Engine.
+    NDVI = (B8 - B4) / (B8 + B4) — resolución 10m, ventana semanal.
+    """
+    __tablename__   = "ndvi_sentinel"
+    id              = Column(Integer, primary_key=True)
+    obs_date        = Column(Date, nullable=False)        # inicio semana
+    region_name     = Column(String(50), nullable=False)  # 'sp_sugarcane_belt'
+    mean_ndvi       = Column(Numeric(6, 4))               # NDVI medio (0-1)
+    std_ndvi        = Column(Numeric(6, 4))               # desviación
+    cloud_cover_pct = Column(Numeric(5, 1))               # cobertura nubosa (%)
+    pixel_count     = Column(Integer)                      # píxeles válidos usados
+    scene_count     = Column(Integer)                      # imágenes S2 compuestas
+    source          = Column(String(30), default="sentinel2_gee")
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__   = (UniqueConstraint("obs_date", "region_name", name="uq_ndvi_date_region"),)
+
+
+class ComexStatExport(Base):
+    """
+    Exportaciones mensuales de azúcar de Brasil — Comex Stat MDIC.
+    NCM 17011400 = Açúcar de cana, em bruto (equiv. ICE Sugar No.11)
+    NCM 17019900 = Outros açúcares (VHP, cristal, refinado)
+    Fuente: https://api-comexstat.mdic.gov.br — lag ~25 días.
+    """
+    __tablename__  = "comex_stat_export"
+    id             = Column(Integer, primary_key=True)
+    ref_date       = Column(Date, nullable=False)          # primer día del mes
+    ncm_code       = Column(String(10), nullable=False)
+    ncm_desc       = Column(String(200))
+    total_kg       = Column(BigInteger)                    # kg neto exportado
+    total_usd_fob  = Column(BigInteger)                    # USD FOB
+    source         = Column(String(30), default="comexstat_mdic")
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("ref_date", "ncm_code", name="uq_comex_date_ncm"),)
+
+
+class InpeFire(Base):
+    """
+    Focos de incendio diarios — INPE/Terrabrasilis AMS.
+    Fuente: ams1h:active-fire-today WFS (multi-satélite).
+    Región: SP+PR (São Paulo + Paraná, cinturón azucarero) via BBOX.
+    """
+    __tablename__ = "inpe_fire"
+    id            = Column(Integer, primary_key=True)
+    obs_date      = Column(Date, nullable=False)
+    state         = Column(String(10), nullable=False)      # SP, PR, SP+PR, etc.
+    fire_count    = Column(Integer)
+    satellite     = Column(String(20), default="MULTI")
+    source        = Column(String(30), default="ams1h_terrabrasilis")
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("obs_date", "state", "satellite",
+                                       name="uq_inpe_date_state_sat"),)
+
+
+class ParanaguaPortSnapshot(Base):
+    """
+    Snapshot diario del line-up del Puerto de Paranaguá (APPA).
+    Filtrado: solo barcos con Mercadoria ACUCAR/SUGAR.
+    Secciones: atracados, programados, ao_largo, esperados, despachados.
+    DESPACHADOS incluye chegada + desatracacao → dwell time directo.
+    Fuente: https://www.appaweb.appa.pr.gov.br/appaweb/pesquisa.aspx?WCI=relLineUpRetroativo
+    """
+    __tablename__  = "paranagua_port_snapshot"
+    id             = Column(Integer, primary_key=True)
+    snapshot_date  = Column(Date, nullable=False)
+    page           = Column(String(20), nullable=False)    # atracados|programados|ao_largo|esperados|despachados
+    ship_name      = Column(String(100), nullable=False)
+    imo            = Column(String(20))
+    dwt            = Column(Numeric(12, 2))                # tonelaje muerto
+    cargo          = Column(String(150))                   # Mercadoria
+    terminal       = Column(String(20))                    # Berço (berth number)
+    sentido        = Column(String(20))                    # Exp|Imp|Imp/Exp
+    arrival_dt     = Column(DateTime)                      # Chegada (real)
+    departure_dt   = Column(DateTime)                      # Desatracacao (despachados)
+    eta_dt         = Column(DateTime)                      # ETA / Cal.Cheg (esperados)
+    tonnage_prev   = Column(Numeric(14, 3))                # Previsto (tons)
+    tonnage_real   = Column(Numeric(14, 3))                # Realizado (tons)
+    source         = Column(String(30), default="appa_paranagua")
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("snapshot_date", "page", "ship_name", "terminal",
+                                        name="uq_paranagua_date_page_ship"),)
