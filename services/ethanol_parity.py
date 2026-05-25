@@ -5,25 +5,35 @@ Lógica:
   Los ingenios brasileños eligen entre producir azúcar o etanol
   según cuál genera más ingreso por tonelada de caña procesada.
 
-  Conversión ATR estándar (CTC/Consecana):
-    1 m³ etanol hidratado ≈ 1.20 ton azúcar equivalente
+  Factor de equivalencia Consecana-SP (estándar oficial Brasil):
+    1 m³ etanol hidratado ≈ 1.4966 ton VHP azúcar equivalente
 
-  Precio ICE No.11 en c/lb → US$/ton:
-    ice_usd_ton = (ice_c_per_lb / 100) * 2204.62
+  Derivación del factor (rendimientos típicos São Paulo, UNICA/MAPA):
+    Azúcar VHP   : ~130 kg / ton caña
+    Etanol hidr. : ~87 L   / ton caña
+    Factor = 130 kg / 87 L = 1.494 kg azúcar por litro = 1.494 ton/m³
+    (Consecana-SP usa 1.4966, misma base, factor oficial)
 
-  Ratio de paridad:
-    parity_ratio = (hydrous_paulinia_usd_m3 / 1.20) / ice_usd_ton
+  Expresión en c/lb (misma unidad que ICE No.11):
+    ethanol_c_lb = hydrous_usd_m3 × 100 / (1.4966 × 2204.62)
+
+  Verificación: 469.25 US$/m³ → 14.22 c/lb equivalente azúcar
+  (históricamente el etanol cotiza muy cerca del ICE ~14-16 c/lb)
+
+  Ratio de paridad (vs ICE No.11):
+    parity_ratio = ethanol_c_lb / ice_c_lb
+                 = ethanol_usd_ton / ice_usd_ton
 
   Interpretación:
-    ratio > 1.05  → etanol vale +5% más que azúcar por ton ATR
-                   → mills diverten caña a etanol → menos azúcar → LONG SB
-    ratio < 0.95  → azúcar vale +5% más que etanol
-                   → mills producen más azúcar → más oferta → SHORT SB
-    0.95–1.05     → zona neutral
+    ratio > 1.05  → etanol +5% sobre ICE → mills prefieren etanol
+                   → menos azúcar disponible → LONG SB
+    ratio < 0.95  → ICE +5% sobre etanol → mills prefieren azúcar
+                   → más oferta → SHORT SB
+    0.95–1.05     → zona neutral (mezcla equilibrada)
 
 Fuentes:
-  Etanol:  CEPEA hydrous_paulinia_usd_m3 (diario)
-  Azúcar físico: CEPEA crystal_sugar_usd_bag50kg (diario, bag 50 kg)
+  Etanol:  CEPEA hydrous_paulinia_usd_m3 (diario, Paulínia SP)
+  Azúcar físico: CEPEA crystal_sugar_usd_bag50kg (diario)
   ICE No.11: yfinance SB=F o DB price_history
 """
 import logging
@@ -31,9 +41,11 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Factor de conversión ATR (Consecana/CTC industria estándar)
-ATR_FACTOR = 1.20          # 1 m³ etanol hidratado ≈ 1.20 ton azúcar equiv
-BAG_KG     = 50            # bolsa 50 kg → 20 bolsas/ton
+# Factor Consecana-SP: 1 m³ etanol hidratado = 1.4966 ton VHP azúcar equiv
+# Derivado de rendimientos típicos São Paulo: 130 kg azúcar / 87 L etanol por ton caña
+# Fuente: Consecana-SP (https://www.consecana.com.br), UNICA/MAPA estadísticas
+ATR_FACTOR  = 1.4966       # ton VHP azúcar equivalente por m³ etanol hidratado
+BAG_KG      = 50           # bolsa CEPEA = 50 kg → 20 bolsas/ton
 LBS_PER_TON = 2204.62      # lbs por tonelada métrica
 
 # Umbrales de señal
@@ -70,6 +82,8 @@ def compute_ethanol_parity(
         "hydrous_usd_m3":        None,
         "hydrous_date":          None,
         "ethanol_usd_ton":       None,
+        "ethanol_c_lb":          None,   # etanol expresado en c/lb azúcar equivalente
+        "spread_c_lb":           None,   # ethanol_c_lb − ice_c_lb (prima en c/lb)
         "crystal_usd_ton":       None,
         "crystal_date":          None,
         "ice_usd_ton":           None,
@@ -106,9 +120,14 @@ def compute_ethanol_parity(
     hydrous_usd_m3 = hydrous["price"]
     ethanol_usd_ton = hydrous_usd_m3 / ATR_FACTOR  # US$/ton azúcar equivalente
 
+    # Etanol en c/lb de azúcar equivalente (misma unidad que ICE No.11)
+    # Formula: (usd_m3 / ATR_factor) * 100 cents / 2204.62 lbs_per_ton
+    ethanol_c_lb = hydrous_usd_m3 * 100 / (ATR_FACTOR * LBS_PER_TON)
+
     result["hydrous_usd_m3"]  = round(hydrous_usd_m3, 2)
     result["hydrous_date"]    = hydrous["date"]
     result["ethanol_usd_ton"] = round(ethanol_usd_ton, 2)
+    result["ethanol_c_lb"]    = round(ethanol_c_lb, 4)
 
     if crystal:
         crystal_usd_bag = crystal["price"]
@@ -131,6 +150,7 @@ def compute_ethanol_parity(
 
         parity_ratio = ethanol_usd_ton / ice_usd_ton if ice_usd_ton > 0 else None
         result["parity_ratio"] = round(parity_ratio, 4) if parity_ratio else None
+        result["spread_c_lb"]  = round(ethanol_c_lb - ice_price_c_lb, 4) if ice_price_c_lb else None
 
         if parity_ratio is not None:
             if parity_ratio >= PARITY_BULLISH:
