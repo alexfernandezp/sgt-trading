@@ -48,9 +48,18 @@ ATR_FACTOR  = 1.4966       # ton VHP azúcar equivalente por m³ etanol hidratad
 BAG_KG      = 50           # bolsa CEPEA = 50 kg → 20 bolsas/ton
 LBS_PER_TON = 2204.62      # lbs por tonelada métrica
 
-# Umbrales de señal
-PARITY_BULLISH = 1.05      # etanol > 5% más caro → LONG azúcar
-PARITY_BEARISH = 0.95      # azúcar > 5% más cara → SHORT azúcar
+# Umbrales calibrados sobre distribución histórica 2010-2026 (N=3947 días)
+# Media ratio: 0.9011  |  Mediana: 0.8858  |  Std: 0.1730
+#
+# P75 = 1.028 → cuartil superior de atractivo etanol (mills claramente prefieren etanol)
+# P25 = 0.788 → cuartil inferior de atractivo etanol (mills claramente prefieren azúcar)
+# Señal activa ~25% LONG + ~25% SHORT + ~50% neutral (distribución equilibrada)
+#
+# Umbrales viejos (0.95/1.05) eran SHORT el 64% del tiempo → mal calibrados
+PARITY_BULLISH    = 1.028  # ratio > P75 → mills prefieren etanol → LONG SB
+PARITY_BEARISH    = 0.788  # ratio < P25 → mills prefieren azúcar → SHORT SB
+PARITY_HIST_MEAN  = 0.9011 # media histórica (para referencia en display)
+PARITY_HIST_MED   = 0.8858 # mediana histórica
 
 
 def compute_ethanol_parity(
@@ -153,28 +162,42 @@ def compute_ethanol_parity(
         result["spread_c_lb"]  = round(ethanol_c_lb - ice_price_c_lb, 4) if ice_price_c_lb else None
 
         if parity_ratio is not None:
+            # Percentil aproximado para display (referencia histórica)
+            if parity_ratio >= 1.093:
+                pct_str = ">P85"
+            elif parity_ratio >= 1.028:
+                pct_str = "P75-P85"
+            elif parity_ratio >= 0.886:
+                pct_str = "P50-P75"
+            elif parity_ratio >= 0.788:
+                pct_str = "P25-P50"
+            elif parity_ratio >= 0.731:
+                pct_str = "P15-P25"
+            else:
+                pct_str = "<P15"
+
             if parity_ratio >= PARITY_BULLISH:
                 result["signal"] = 1
                 result["bias"]   = "LONG"
                 result["description"] = (
-                    f"Paridad etanol/azúcar ICE = {parity_ratio:.3f} "
-                    f"(etanol {(parity_ratio-1)*100:+.1f}% vs ICE) "
+                    f"Paridad etanol/ICE = {parity_ratio:.3f} [{pct_str}] "
+                    f"(cuartil superior histórico) "
                     f"→ mills prefieren ETANOL → menos azúcar → LONG SB"
                 )
             elif parity_ratio <= PARITY_BEARISH:
                 result["signal"] = -1
                 result["bias"]   = "SHORT"
                 result["description"] = (
-                    f"Paridad etanol/azúcar ICE = {parity_ratio:.3f} "
-                    f"(azúcar {(1-parity_ratio)*100:+.1f}% vs etanol) "
+                    f"Paridad etanol/ICE = {parity_ratio:.3f} [{pct_str}] "
+                    f"(cuartil inferior histórico) "
                     f"→ mills prefieren AZÚCAR → más oferta → SHORT SB"
                 )
             else:
                 result["signal"] = 0
                 result["bias"]   = "NEUTRAL"
                 result["description"] = (
-                    f"Paridad etanol/azúcar ICE = {parity_ratio:.3f} "
-                    f"({(parity_ratio-1)*100:+.1f}% vs ICE) — zona neutral [0.95–1.05]"
+                    f"Paridad etanol/ICE = {parity_ratio:.3f} [{pct_str}] "
+                    f"— zona neutral histórica [P25–P75: 0.788–1.028]"
                 )
     else:
         # Sin precio ICE, usamos azúcar físico como referencia
@@ -183,18 +206,18 @@ def compute_ethanol_parity(
             if phys >= PARITY_BULLISH:
                 result["signal"] = 1; result["bias"] = "LONG"
                 result["description"] = (
-                    f"Paridad etanol/azúcar físico = {phys:.3f} "
-                    f"→ mills prefieren ETANOL → LONG SB (ref. física)"
+                    f"Paridad etanol/cristal = {phys:.3f} [>P75] "
+                    f"→ mills prefieren ETANOL → LONG SB (ref. físico)"
                 )
             elif phys <= PARITY_BEARISH:
                 result["signal"] = -1; result["bias"] = "SHORT"
                 result["description"] = (
-                    f"Paridad etanol/azúcar físico = {phys:.3f} "
-                    f"→ mills prefieren AZÚCAR → SHORT SB (ref. física)"
+                    f"Paridad etanol/cristal = {phys:.3f} [<P25] "
+                    f"→ mills prefieren AZÚCAR → SHORT SB (ref. físico)"
                 )
             else:
                 result["description"] = (
-                    f"Paridad etanol/azúcar físico = {phys:.3f} — neutral (sin precio ICE)"
+                    f"Paridad etanol/cristal = {phys:.3f} — neutral (sin precio ICE)"
                 )
 
     return result
