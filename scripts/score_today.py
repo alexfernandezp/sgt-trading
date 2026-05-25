@@ -813,8 +813,8 @@ def print_macro_signals(macro, direction):
     bias_tag = bias_map.get(bias, "[%s]" % bias)
 
     print()
-    print("  -- MACRO (BRL/USD + Brent + correlación intraday) --")
-    print("  Score macro: %+d / 3   %s   (dirección: %s)" % (score, bias_tag, direction))
+    print("  -- MACRO (BRL/USD + Brent + correlación + paridad etanol) --")
+    print("  Score macro: %+d / 4   %s   (dirección: %s)" % (score, bias_tag, direction))
 
     # BRL/USD
     brl_p = brl.get("brl_per_usd")
@@ -852,6 +852,24 @@ def print_macro_signals(macro, direction):
             cb_s, cbrl_s, bt_s, brt_s, corr.get("bias", "NEUTRAL")))
     else:
         print("  Correl  : sin datos 5m")
+
+    # Paridad etanol-azúcar (CEPEA)
+    parity = macro.get("parity", {})
+    pr = parity.get("parity_ratio")
+    phys = parity.get("parity_ratio_physical")
+    hy  = parity.get("hydrous_usd_m3")
+    hd  = parity.get("hydrous_date", "?")
+    icu = parity.get("ice_usd_ton")
+    cru = parity.get("crystal_usd_ton")
+    pb  = parity.get("bias", "NEUTRAL")
+    if hy is not None:
+        hy_s  = "Etanol=%s US$/m³(%s)" % (hy, hd)
+        icu_s = ("  ICE=%s US$/t" % icu)   if icu  is not None else ""
+        cru_s = ("  Cristal=%s US$/t" % cru) if cru is not None else ""
+        pr_s  = ("  ratio=%.3f" % pr)      if pr   is not None else (("  ratio_fis=%.3f" % phys) if phys else "")
+        print("  Paridad : %s%s%s%s  [%s]" % (hy_s, icu_s, cru_s, pr_s, pb))
+    else:
+        print("  Paridad : sin datos CEPEA (ejecutar fetch_cepea)")
 
 
 # ── Vol surface display ───────────────────────────────────────────────────────
@@ -1242,7 +1260,7 @@ def run():
     l1_r_sum = _layer_sum(scores_r, LAYER1_KEYS)
     l1_dir_hint = "LONG" if l1_l_sum >= l1_r_sum else "SHORT"
     try:
-        macro = compute_macro_signals(l1_dir_hint)
+        macro = compute_macro_signals(l1_dir_hint, session=session)
     except Exception as e:
         logger.debug("macro_signals error: %s", e)
         macro = None
@@ -1349,13 +1367,17 @@ def run():
     if vwap_bias != "NEUTRAL" and vwap_bias != direction and direction != "NEUTRAL":
         print("  [!] VWAP bias contradice la direccion - revisar")
     if macro:
-        mb  = macro.get("macro_bias", "NEUTRAL")
-        ms_ = macro.get("macro_score", 0)
-        brl_d = macro.get("brl",   {}).get("bias", "N/D")
-        brt_d = macro.get("brent", {}).get("bias", "N/D")
-        print("  Macro      : score=%+d  bias=%s  (BRL=%s  Brent=%s)" % (ms_, mb, brl_d, brt_d))
+        mb    = macro.get("macro_bias", "NEUTRAL")
+        ms_   = macro.get("macro_score", 0)
+        brl_d = macro.get("brl",    {}).get("bias", "N/D")
+        brt_d = macro.get("brent",  {}).get("bias", "N/D")
+        par_d = macro.get("parity", {}).get("bias", "N/D")
+        pr_v  = macro.get("parity", {}).get("parity_ratio")
+        pr_s  = ("  ratio=%.3f" % pr_v) if pr_v is not None else ""
+        print("  Macro      : score=%+d/4  bias=%s  (BRL=%s  Brent=%s  Paridad=%s%s)" % (
+            ms_, mb, brl_d, brt_d, par_d, pr_s))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
-            print("  [!] Macro contradice la direccion — BRL/Brent en contra")
+            print("  [!] Macro contradice la direccion — BRL/Brent/Paridad en contra")
     if brazil:
         a4_bias = brazil.get("bias", "NEUTRAL")
         a4_sig  = brazil.get("signal_a4", 0)
@@ -1386,7 +1408,7 @@ def run():
     # Recalcular macro con la dirección confirmada si difiere de la sugerida
     if confirmed_direction not in ("NEUTRAL", None) and confirmed_direction != l1_dir_hint:
         try:
-            macro = compute_macro_signals(confirmed_direction)
+            macro = compute_macro_signals(confirmed_direction, session=session)
         except Exception:
             pass
 

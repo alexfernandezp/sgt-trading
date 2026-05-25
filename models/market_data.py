@@ -138,6 +138,32 @@ class BrazilProduction(Base):
     )
 
 
+class CepeaPrice(Base):
+    """
+    Precios CEPEA/ESALQ de etanol y azúcar físicos brasileños.
+    Fuente: cepea.org.br/en/indicator/ethanol.aspx y /sugar.aspx
+    Series clave:
+      hydrous_paulinia_usd_m3   : hidratado Paulínia (SP) — benchmark diario producción
+      hydrous_fuel_usd_liter    : hidratado combustible SP — semanal
+      anhydrous_usd_liter       : anhidratado SP — semanal
+      crystal_sugar_usd_bag50kg : azúcar cristal físico SP — diario
+    """
+    __tablename__ = "cepea_prices"
+    id              = Column(Integer, primary_key=True)
+    price_date      = Column(Date, nullable=False)
+    series_name     = Column(String(60), nullable=False)
+    price_usd       = Column(Numeric(10, 4))
+    unit            = Column(String(30))
+    pct_daily       = Column(Numeric(8, 4))
+    pct_weekly      = Column(Numeric(8, 4))
+    pct_monthly     = Column(Numeric(8, 4))
+    source_page     = Column(String(10))     # 'ethanol' | 'sugar'
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (
+        UniqueConstraint("price_date", "series_name", name="uq_cepea_date_series"),
+    )
+
+
 class SantosPortSnapshot(Base):
     """
     Snapshot diario del ship tracker del Puerto de Santos.

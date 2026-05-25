@@ -14,6 +14,7 @@ from ingestion.prices import fetch_prices
 from ingestion.cot import fetch_cot
 from ingestion.intraday import fetch_intraday
 from ingestion.santos_port import fetch_santos_port
+from ingestion.cepea import fetch_cepea
 
 
 def run():
@@ -48,6 +49,21 @@ def run():
                     logger.warning("  Santos error: %s", err)
         except Exception as _e:
             logger.warning("Santos port error (no critico): %s", _e)
+
+        logger.info("CEPEA — precios etanol y azúcar físicos Brasil...")
+        try:
+            cepea = fetch_cepea(session)
+            logger.info(f"  Etanol rows: {cepea['ethanol_rows']}  Azúcar rows: {cepea['sugar_rows']}")
+            lat = cepea.get("latest", {})
+            if lat.get("hydrous_paulinia_usd_m3"):
+                logger.info(f"  Etanol hidratado Paulínia: {lat['hydrous_paulinia_usd_m3']:.2f} US$/m³")
+            if lat.get("crystal_sugar_usd_bag50kg"):
+                logger.info(f"  Azúcar cristal: {lat['crystal_sugar_usd_bag50kg']:.2f} US$/bolsa 50kg")
+            if cepea["errors"]:
+                for err in cepea["errors"]:
+                    logger.warning("  CEPEA error: %s", err)
+        except Exception as _e:
+            logger.warning("CEPEA error (no critico): %s", _e)
 
     except Exception as exc:
         logger.error(f"Error: {exc}", exc_info=True)

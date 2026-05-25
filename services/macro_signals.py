@@ -313,40 +313,55 @@ def compute_intraday_correlation(direction: str = "LONG") -> dict:
 # Combined macro signal
 # ---------------------------------------------------------------------------
 
-def compute_macro_signals(direction: str = "LONG") -> dict:
+def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     """
-    Combina BRL, Brent y correlacion intraday en una señal macro agregada.
+    Combina BRL, Brent, correlacion intraday y paridad etanol-azúcar.
 
-    Devuelve dict con todos los sub-signals y un macro_score (-3 a +3).
+    Devuelve dict con todos los sub-signals y un macro_score (-4 a +4).
+    La paridad etanol (CEPEA) es el indicador fundamental más directo del
+    mix mills Brasil; Brent es el confirmador macro secundario.
     """
     brl   = compute_brl_signal()
     brent = compute_brent_signal()
     corr  = compute_intraday_correlation(direction)
 
+    # Paridad etanol (requiere session de DB con datos CEPEA)
+    parity = {"signal": 0, "bias": "NEUTRAL",
+               "description": "Paridad etanol: session no disponible"}
+    if session is not None:
+        try:
+            from services.ethanol_parity import compute_ethanol_parity
+            ice_c_lb = brent.get("_ice_c_lb")   # None → yf internamente
+            parity = compute_ethanol_parity(session, ice_price_c_lb=ice_c_lb)
+        except Exception as e:
+            logger.warning("macro_signals: parity error: %s", e)
+
     # Score: cada sub-señal aporta -1/0/+1 ajustado por direccion
     dir_mult = 1 if direction.upper() == "LONG" else -1
 
-    score_brl   = brl["signal"]   * dir_mult   # +1 = confirma direccion
-    score_brent = brent["signal"] * dir_mult
-    score_corr  = corr["signal"]               # ya ajustado por direction
+    score_brl    = brl["signal"]    * dir_mult
+    score_brent  = brent["signal"]  * dir_mult
+    score_corr   = corr["signal"]               # ya ajustado por direction
+    score_parity = parity["signal"] * dir_mult  # +1 = confirma direccion
 
-    macro_score = score_brl + score_brent + score_corr   # -3 a +3
+    macro_score = score_brl + score_brent + score_corr + score_parity   # -4 a +4
 
-    if macro_score >= 2:
+    if macro_score >= 3:
         macro_bias = "STRONG_" + direction.upper()
-    elif macro_score == 1:
+    elif macro_score >= 1:
         macro_bias = direction.upper()
-    elif macro_score <= -2:
+    elif macro_score <= -3:
         macro_bias = "STRONG_CONTRA"
-    elif macro_score == -1:
+    elif macro_score <= -1:
         macro_bias = "CONTRA"
     else:
         macro_bias = "NEUTRAL"
 
     return {
-        "brl":        brl,
-        "brent":      brent,
-        "corr":       corr,
+        "brl":         brl,
+        "brent":       brent,
+        "corr":        corr,
+        "parity":      parity,
         "macro_score": macro_score,
         "macro_bias":  macro_bias,
         "direction":   direction.upper(),

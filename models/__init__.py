@@ -1,5 +1,5 @@
 from .base import Base
-from .market_data import PriceHistory, PriceBars, CotData, CalendarEvent, OptionsData, BrazilProduction, SantosPortSnapshot
+from .market_data import PriceHistory, PriceBars, CotData, CalendarEvent, OptionsData, BrazilProduction, SantosPortSnapshot, CepeaPrice
 from .positions import Position, ClosedTrade
 from .scoring import DailyScoring
 from .pnl import DailyPnl
@@ -7,7 +7,7 @@ from .market_bible import MarketBible, MarketBibleLog
 
 __all__ = [
     "Base",
-    "PriceHistory", "PriceBars", "CotData", "CalendarEvent", "OptionsData", "BrazilProduction", "SantosPortSnapshot",
+    "PriceHistory", "PriceBars", "CotData", "CalendarEvent", "OptionsData", "BrazilProduction", "SantosPortSnapshot", "CepeaPrice",
     "Position", "ClosedTrade",
     "DailyScoring",
     "DailyPnl",
