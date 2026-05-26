@@ -21,6 +21,7 @@ from ingestion.ndvi_gee import fetch_ndvi
 from ingestion.comex_stat import fetch_comex_stat
 from ingestion.inpe_fires import fetch_fires
 from ingestion.paranagua_port import fetch_paranagua_port
+from ingestion.conab_cana import get_latest_conab, fetch_conab
 
 
 def run():
@@ -139,6 +140,31 @@ def run():
                     logger.warning("  Paranaguá error: %s", err)
         except Exception as _e:
             logger.warning("Paranaguá port error (no critico): %s", _e)
+
+        logger.info("CONAB — comprobando nuevo levantamento...")
+        try:
+            from datetime import date as _date
+            latest = get_latest_conab(session)
+            if latest:
+                cur_season_start = _date.today().year if _date.today().month >= 4 else _date.today().year - 1
+                cur_season = f"{cur_season_start}/{str(cur_season_start+1)[2:]}"
+                if latest["season"] == cur_season:
+                    next_lev = latest["levantamento"] + 1
+                else:
+                    cur_season_start = int(latest["season"].split("/")[0])
+                    next_lev = latest["levantamento"] + 1
+                result_c = fetch_conab(session, cur_season_start, next_lev, None)
+                if result_c.get("errors"):
+                    logger.info("  Lev %d: no disponible aún", next_lev)
+                else:
+                    logger.info("  NUEVO levantamento ingerido: %s %dº lev  azúcar=%.2f Mt  rev=%s%%",
+                                result_c["season"], result_c["levantamento"],
+                                result_c.get("sugar_total_mt") or 0,
+                                f"{result_c['revision_sugar_pct']:+.1f}" if result_c.get("revision_sugar_pct") else "N/A")
+            else:
+                logger.info("  Sin datos CONAB previos — ejecutar fetch_conab.py manualmente")
+        except Exception as _e:
+            logger.warning("CONAB auto-check error (no critico): %s", _e)
 
         logger.info("GEE Crops — leyendo métricas almacenadas (NDVI/LST/SPI)...")
         try:

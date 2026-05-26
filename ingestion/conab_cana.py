@@ -143,14 +143,20 @@ def _parse_pdf(pdf_bytes: bytes, season: str, lev: int, pub_date: date) -> dict:
         )
 
         # ── 1. Resumen ejecutivo: totales via regex ────────────────────────
-        # Caña total: "cana-de-açúcar estimada em 673,2 milhões de toneladas"
-        # Patrón preciso: "cana-de-açúcar" seguido de estimativa/produção + número
+        # Caña total: buscar número >=500 Mt inmediatamente antes de "milhões de toneladas de cana"
+        # Esto es invariante a si el texto dice "estimada em", "indica produção de", etc.
         m = re.search(
-            r"cana-de-a[cç][uú]car.*?estimad[ao]\s*em\s*([\d]+[.,][\d]+)\s*milh[oõ]es?\s*de\s*toneladas",
-            full_text, re.IGNORECASE | re.DOTALL
+            r"((?:[5-9]\d{2}|[1-9]\d{3})[.,]\d+)\s*milh[oõ]es?\s*de\s*toneladas\s*de\s*cana",
+            full_text, re.IGNORECASE
         )
         if not m:
-            # Fallback: número grande (>=500 Mt → solo puede ser cana) cerca de "produção"
+            # Fallback: "cana-de-açúcar estimada em X milhões"
+            m = re.search(
+                r"cana-de-a[cç][uú]car.*?estimad[ao]\s*em\s*([\d]+[.,][\d]+)\s*milh[oõ]es?\s*de\s*toneladas",
+                full_text, re.IGNORECASE | re.DOTALL
+            )
+        if not m:
+            # Fallback 2: "produção de X milhões" con número >=500
             m = re.search(
                 r"produ[cç][aã]o\s*de\s*((?:[5-9]\d{2}|[1-9]\d{3})[.,]\d+)\s*milh[oõ]es?\s*de\s*toneladas",
                 full_text, re.IGNORECASE
@@ -158,19 +164,15 @@ def _parse_pdf(pdf_bytes: bytes, season: str, lev: int, pub_date: date) -> dict:
         if m:
             result["cane_total_mt"] = _num(m.group(1))
 
-        # YoY caña: "redução de 0,5%" / "aumento de X,X%"
-        m_red = re.search(
-            r"cana-de-a[cç][uú]car.*?redu[cç][aã]o\s*de\s*([\d]+[.,]\d+)%",
-            full_text, re.IGNORECASE | re.DOTALL
-        )
-        m_aum = re.search(
-            r"cana-de-a[cç][uú]car.*?aumento\s*de\s*([\d]+[.,]\d+)%",
-            full_text, re.IGNORECASE | re.DOTALL
-        )
-        if m_red:
-            result["yoy_cane_pct"] = -abs(_num(m_red.group(1)) or 0)
-        elif m_aum:
+        # YoY caña: buscar en ventana de 400 chars alrededor del total nacional (evita matchear estados)
+        cane_idx = full_text.find(m.group(1)) if m else -1
+        ctx_cane = full_text[max(0, cane_idx - 50):cane_idx + 350] if cane_idx >= 0 else full_text[:2000]
+        m_aum = re.search(r"aumento\s*de\s*([\d]+[.,]\d+)%", ctx_cane, re.IGNORECASE)
+        m_red = re.search(r"redu[cç][aã]o\s*de\s*([\d]+[.,]\d+)%", ctx_cane, re.IGNORECASE)
+        if m_aum:
             result["yoy_cane_pct"] = abs(_num(m_aum.group(1)) or 0)
+        elif m_red:
+            result["yoy_cane_pct"] = -abs(_num(m_red.group(1)) or 0)
 
         # Area: "8.954,6 mil ha" → mha
         m = re.search(r"([\d]+\.[\d]+,\d)\s*mil\s*ha\b", full_text)
