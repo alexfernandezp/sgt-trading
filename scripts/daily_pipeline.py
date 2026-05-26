@@ -166,6 +166,19 @@ def run():
         except Exception as _e:
             logger.warning("CONAB auto-check error (no critico): %s", _e)
 
+        logger.info("Signal Log — rellenando retornos forward para IC weighting...")
+        try:
+            from services.signal_logger import fill_forward_returns
+            filled = fill_forward_returns(session, instrument="SBN26")
+            total_filled = sum(filled.values())
+            if total_filled > 0:
+                logger.info("  Retornos rellenados: 5d=%d  10d=%d  20d=%d",
+                            filled[5], filled[10], filled[20])
+            else:
+                logger.info("  Sin retornos pendientes de rellenar")
+        except Exception as _e:
+            logger.warning("Signal log forward returns error (no critico): %s", _e)
+
         logger.info("GEE Crops — leyendo métricas almacenadas (NDVI/LST/SPI)...")
         try:
             from ingestion.gee_crops import get_latest_gee_metrics

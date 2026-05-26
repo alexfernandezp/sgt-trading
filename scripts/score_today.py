@@ -26,6 +26,8 @@ from services.paranagua_signal import compute_paranagua_signal
 from ingestion.santos_port import get_latest_snapshot
 from ingestion.intraday import fetch_intraday
 from ingestion.options import score_options, get_latest_files
+from services.signal_logger import log_signals
+from services.ic_weighting import compute_weighted_macro_score, format_ic_summary
 
 # ── Label dictionaries ────────────────────────────────────────────────────────
 
@@ -1618,6 +1620,21 @@ def run():
         else:
             print("  Sin CSV de opciones (C3 manual mas adelante)")
 
+    # Log señales del día (antes de la decisión final)
+    try:
+        from datetime import date as _date
+        n_logged = log_signals(session, _date.today(), inputs, brazil, macro, santos_signal)
+        logger.debug("signal_logger: %d señales guardadas", n_logged)
+    except Exception as _e:
+        logger.debug("signal_logger error (no critico): %s", _e)
+
+    # IC Weighting — score ponderado por IC histórico
+    ic_result = None
+    try:
+        ic_result = compute_weighted_macro_score(session, macro)
+    except Exception as _e:
+        logger.debug("ic_weighting error (no critico): %s", _e)
+
     # [5] Combined decision
     direction, decision_auto, rationale = compute_combined_decision(scores_l, scores_r, l2l, l2r)
 
@@ -1647,6 +1664,8 @@ def run():
         print("  Macro      : score=%+d/13  bias=%s" % (ms_, mb))
         print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
             brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
+        if ic_result:
+            print(format_ic_summary(ic_result))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
             print("  [!] Macro contradice la direccion — BRL/Brent/Paridad en contra")
     if brazil:

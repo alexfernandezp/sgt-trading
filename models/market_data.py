@@ -363,6 +363,31 @@ class GeeMetric(Base):
                                         name="uq_gee_date_poi_metric"),)
 
 
+class SignalDailyLog(Base):
+    """
+    Registro histórico de señales diarias — permite computar IC rolling por señal
+    y calibrar pesos dinámicos (IC Weighting) para el macro score.
+
+    Flujo:
+      1. score_today.py escribe raw_value + direction tras calcular señales.
+      2. daily_pipeline.py rellena fwd_ret_5d/10d/20d retroactivamente cuando
+         el precio futuro ya está disponible.
+      3. ic_weighting.py lee esta tabla para compute Spearman IC rolling.
+    """
+    __tablename__   = "signal_daily_log"
+    id              = Column(Integer, primary_key=True)
+    date            = Column(Date, nullable=False)
+    signal_name     = Column(String(60), nullable=False)
+    signal_group    = Column(String(30), nullable=False)   # cot|macro|fundamental|spread
+    raw_value       = Column(Numeric(14, 6))               # valor continuo (p.ej. corr=0.45, oni=-0.11)
+    direction       = Column(Integer)                      # +1=LONG, -1=SHORT, 0=NEUTRAL
+    fwd_ret_5d      = Column(Numeric(8, 4))                # retorno % SBN front-month +5 días
+    fwd_ret_10d     = Column(Numeric(8, 4))                # retorno % +10 días
+    fwd_ret_20d     = Column(Numeric(8, 4))                # retorno % +20 días
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("date", "signal_name", name="uq_signal_log_date_name"),)
+
+
 class ConabCanaLevantamento(Base):
     __tablename__   = "conab_cana_levantamento"
     id              = Column(Integer, primary_key=True)
