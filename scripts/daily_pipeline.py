@@ -140,6 +140,26 @@ def run():
         except Exception as _e:
             logger.warning("Paranaguá port error (no critico): %s", _e)
 
+        logger.info("GEE Crops — leyendo métricas almacenadas (NDVI/LST/SPI)...")
+        try:
+            from ingestion.gee_crops import get_latest_gee_metrics
+            gee = get_latest_gee_metrics(session)
+            if gee:
+                for poi_id, metrics in gee.items():
+                    parts = []
+                    for metric, d in metrics.items():
+                        z = d.get("z_score")
+                        v = d.get("value")
+                        anom = " ⚠" if d.get("anomaly") else ""
+                        if v is not None:
+                            parts.append(f"{metric}={v:.3f}(z={z:+.2f}{anom})"
+                                         if z is not None else f"{metric}={v:.3f}")
+                    logger.info("  %-25s %s", poi_id, "  ".join(parts))
+            else:
+                logger.info("  Sin datos GEE (ejecutar: py scripts/run_gee_crops.py)")
+        except Exception as _e:
+            logger.warning("GEE crops read error (no critico): %s", _e)
+
     except Exception as exc:
         logger.error(f"Error: {exc}", exc_info=True)
         session.rollback()

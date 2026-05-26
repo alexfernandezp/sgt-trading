@@ -1,0 +1,18 @@
+Sprint 3: GEE Crop Intelligence + riesgo monzon India
+
+Nuevos modulos:
+- config/gee_pois.json: 3 POIs (BR SP, Tailandia, India UP+MH)
+- ingestion/gee_crops.py: NDVI/NDWI (S2), LST (MODIS), SPI90 (CHIRPS)
+  z-score vs baseline 5 anos por semana del ano
+- services/harvest_pace_signal.py: ritmo cosecha NDVI z-score
+  logica por temporada (cosecha vs crecimiento)
+- services/crop_stress_signal.py: estres calor (LST) + hidrico (NDWI)
+- services/rainfall_signal.py: sequia SPI-90 CHIRPS BR+TH+IN
+- scripts/run_gee_crops.py: runner independiente (2x semana)
+
+Actualizaciones:
+- services/enso_signal.py: +india_monsoon_risk (ONI -> prob monzon debil)
+- services/macro_signals.py: 9 -> 12 senales (+-12), +harvest_pace/crop_stress/rainfall
+- models/market_data.py: +GeeMetric model, +Float/Boolean imports
+- scripts/daily_pipeline.py: muestra metricas GEE desde DB (sin llamar GEE)
+- scripts/score_today.py: display harvest pace, crop stress, SPI-90, monzon India

@@ -1,0 +1,40 @@
+{
+  "pois": [
+    {
+      "id": "br_sp_sugarcane",
+      "name": "Cinturón azucarero São Paulo",
+      "type": "mill",
+      "coords": [[-51.5, -19.5], [-45.5, -19.5], [-45.5, -23.5], [-51.5, -23.5]],
+      "harvest_months": [4, 5, 6, 7, 8, 9, 10, 11],
+      "metrics": ["ndvi", "ndwi", "lst", "spi90"],
+      "scale_m": 500,
+      "baseline_years": 5,
+      "weight": 1.0,
+      "note": "Principais municípios: Ribeirão Preto, Piracicaba, Sertãozinho, Araçatuba"
+    },
+    {
+      "id": "th_sugarcane_belt",
+      "name": "Thailand sugarcane belt",
+      "type": "mill",
+      "coords": [[99.0, 13.5], [102.5, 13.5], [102.5, 17.5], [99.0, 17.5]],
+      "harvest_months": [11, 12, 1, 2, 3],
+      "metrics": ["ndvi", "ndwi", "lst", "spi90"],
+      "scale_m": 500,
+      "baseline_years": 5,
+      "weight": 0.7,
+      "note": "Kanchanaburi, Nakhon Sawan, Udon Thani — counter-seasonal vs Brazil"
+    },
+    {
+      "id": "in_up_maharashtra",
+      "name": "India UP + Maharashtra sugarcane",
+      "type": "mill",
+      "coords": [[73.5, 17.0], [83.5, 17.0], [83.5, 28.5], [73.5, 28.5]],
+      "harvest_months": [10, 11, 12, 1, 2, 3],
+      "metrics": ["ndvi", "lst", "spi90"],
+      "scale_m": 1000,
+      "baseline_years": 5,
+      "weight": 0.5,
+      "note": "UP ~45% India production, Maharashtra ~25%. Monsoon Jun-Sep crítico."
+    }
+  ]
+}

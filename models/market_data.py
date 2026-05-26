@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Numeric, BigInteger,
+    Column, Integer, String, Numeric, BigInteger, Float, Boolean,
     Date, DateTime, Text, UniqueConstraint, JSON,
 )
 from .base import Base
@@ -332,3 +332,32 @@ class ParanaguaPortSnapshot(Base):
     created_at     = Column(DateTime, default=datetime.utcnow)
     __table_args__  = (UniqueConstraint("snapshot_date", "page", "ship_name", "terminal",
                                         name="uq_paranagua_date_page_ship"),)
+
+
+class GeeMetric(Base):
+    """
+    Métricas GEE por POI y fecha — harvest pace, crop stress, SPI.
+    Un registro por (fecha, poi_id, métrica).
+    POIs configurados en config/gee_pois.json.
+
+    Métricas:
+      ndvi   — índice vegetación Sentinel-2 (harvest pace)
+      ndwi   — índice agua en vegetación Sentinel-2 (estrés hídrico)
+      lst    — temperatura superficial terrestre MODIS °C
+      spi90  — precipitación acumulada 90d vs baseline (z-score)
+    """
+    __tablename__   = "gee_metric"
+    id              = Column(Integer, primary_key=True)
+    obs_date        = Column(Date, nullable=False)
+    poi_id          = Column(String(50), nullable=False)
+    metric          = Column(String(20), nullable=False)
+    value           = Column(Float)
+    z_score         = Column(Float)
+    anomaly         = Column(Boolean, default=False)
+    baseline_mean   = Column(Float)
+    baseline_std    = Column(Float)
+    n_baseline_yrs  = Column(Integer)
+    source          = Column(String(30), default="gee")
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("obs_date", "poi_id", "metric",
+                                        name="uq_gee_date_poi_metric"),)

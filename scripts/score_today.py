@@ -814,8 +814,8 @@ def print_macro_signals(macro, direction):
     bias_tag = bias_map.get(bias, "[%s]" % bias)
 
     print()
-    print("  -- MACRO (BRL/USD + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego) --")
-    print("  Score macro: %+d / 9   %s   (dirección: %s)" % (score, bias_tag, direction))
+    print("  -- MACRO (BRL + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego + GEE) --")
+    print("  Score macro: %+d / 12  %s   (dirección: %s)" % (score, bias_tag, direction))
 
     # BRL/USD — brl_per_usd = USDBRL ≈ 5.0 (quote mercado), usd_per_brl ≈ 0.20
     brl_q  = brl.get("brl_per_usd")   # cuántos BRL por 1 USD (≈5.0)
@@ -968,6 +968,71 @@ def print_macro_signals(macro, direction):
             fst, fcurr or 0, fz, fmean or 0, fstd or 0, fmo_s, fb))
     else:
         print("  Fuego SP+PR: sin datos (ejecutar fetch_fires)")
+
+    # ── Riesgo monzón India (ENSO → predicción Jun-Sep) ─────────────────────
+    monsoon = enso.get("india_monsoon_risk") if enso else None
+    if monsoon and monsoon.get("in_predictive_window") and monsoon.get("monsoon_risk") != "neutro":
+        risk  = monsoon.get("monsoon_risk", "?").upper()
+        prob  = monsoon.get("prob_below_normal")
+        prob_s = f"{prob:.0%}" if prob is not None else "?"
+        print("  Monzón India: riesgo=%s  prob_débil=%s  [ventana predictiva activa]" % (
+            risk, prob_s))
+
+    # ── GEE Harvest Pace (NDVI BR+TH+IN vs baseline 5yr) ────────────────────
+    hp = macro.get("harvest_pace", {})
+    hp_score = hp.get("score_weighted")
+    hp_bias  = hp.get("bias", "NEUTRAL")
+    hp_pois  = hp.get("pois", {})
+    if hp_pois:
+        parts = []
+        for pid, d in hp_pois.items():
+            tag   = pid.split("_")[0].upper()
+            z     = d.get("z_score")
+            seas  = "H" if d.get("in_harvest") else "G"
+            anom  = "!" if d.get("anomaly") else ""
+            parts.append(f"{tag}({seas}) z={z:+.2f}{anom}" if z is not None else f"{tag} n/a")
+        print("  HarvestPace: score=%+.2f  %s  |  %s  [%s]" % (
+            hp_score or 0, "  ".join(parts), hp.get("description", "")[:60], hp_bias))
+    else:
+        print("  HarvestPace: sin datos GEE (py scripts/run_gee_crops.py)")
+
+    # ── GEE Crop Stress (LST + NDWI BR+TH+IN) ───────────────────────────────
+    cs = macro.get("crop_stress", {})
+    cs_score = cs.get("score_weighted")
+    cs_bias  = cs.get("bias", "NEUTRAL")
+    cs_pois  = cs.get("pois", {})
+    if cs_pois:
+        parts = []
+        for pid, d in cs_pois.items():
+            tag  = pid.split("_")[0].upper()
+            lz   = d.get("lst_z")
+            wz   = d.get("ndwi_z")
+            flag = "🔥" if d.get("heat_stress") else ("💧" if d.get("water_stress") else "")
+            lst_s  = f"LST={lz:+.1f}" if lz is not None else ""
+            ndwi_s = f"NDWI={wz:+.1f}" if wz is not None else ""
+            parts.append(f"{tag} {lst_s} {ndwi_s}{flag}".strip())
+        print("  CropStress : score=%+.2f  %s  [%s]" % (
+            cs_score or 0, "  ".join(parts), cs_bias))
+    else:
+        print("  CropStress : sin datos GEE (py scripts/run_gee_crops.py)")
+
+    # ── GEE Rainfall SPI-90 (CHIRPS BR+TH+IN) ───────────────────────────────
+    rf = macro.get("rainfall", {})
+    rf_score = rf.get("score_weighted")
+    rf_bias  = rf.get("bias", "NEUTRAL")
+    rf_pois  = rf.get("pois", {})
+    if rf_pois:
+        parts = []
+        for pid, d in rf_pois.items():
+            tag  = pid.split("_")[0].upper()
+            z    = d.get("spi90_z")
+            mm   = d.get("precip_mm")
+            flag = "⚠" if d.get("drought") else ""
+            parts.append(f"{tag} SPI={z:+.2f}({mm:.0f}mm){flag}" if z is not None else f"{tag} n/a")
+        print("  Rainfall   : score=%+.2f  %s  [%s]" % (
+            rf_score or 0, "  ".join(parts), rf_bias))
+    else:
+        print("  Rainfall   : sin datos GEE (py scripts/run_gee_crops.py)")
 
 
 # ── Vol surface display ───────────────────────────────────────────────────────

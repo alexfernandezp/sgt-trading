@@ -435,7 +435,7 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         except Exception as e:
             logger.warning("macro_signals: comex error: %s", e)
 
-    # INPE fuego — anomalía focos incendio SP
+    # INPE fuego — anomalía focos incendio SP+PR
     fire = {"signal": 0, "bias": "NEUTRAL",
             "description": "INPE fuego: sin datos (ejecutar fetch_fires)"}
     if session is not None:
@@ -445,46 +445,83 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         except Exception as e:
             logger.warning("macro_signals: fire error: %s", e)
 
+    # GEE — Harvest Pace (NDVI BR+TH+IN vs baseline 5yr)
+    harvest_pace = {"signal": 0, "bias": "NEUTRAL",
+                    "description": "Harvest pace: sin datos GEE (ejecutar run_gee_crops.py)"}
+    if session is not None:
+        try:
+            from services.harvest_pace_signal import compute_harvest_pace_signal
+            harvest_pace = compute_harvest_pace_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: harvest_pace error: %s", e)
+
+    # GEE — Crop Stress (LST + NDWI BR+TH+IN)
+    crop_stress = {"signal": 0, "bias": "NEUTRAL",
+                   "description": "Crop stress: sin datos GEE (ejecutar run_gee_crops.py)"}
+    if session is not None:
+        try:
+            from services.crop_stress_signal import compute_crop_stress_signal
+            crop_stress = compute_crop_stress_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: crop_stress error: %s", e)
+
+    # GEE — Rainfall SPI-90 (CHIRPS BR+TH+IN)
+    rainfall = {"signal": 0, "bias": "NEUTRAL",
+                "description": "Rainfall SPI: sin datos GEE (ejecutar run_gee_crops.py)"}
+    if session is not None:
+        try:
+            from services.rainfall_signal import compute_rainfall_signal
+            rainfall = compute_rainfall_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: rainfall error: %s", e)
+
     # ── Scoring ──────────────────────────────────────────────────────────────
     dir_mult = 1 if direction.upper() == "LONG" else -1
 
-    score_brl     = brl["signal"]     * dir_mult
-    score_brent   = brent["signal"]   * dir_mult
-    score_corr    = corr["signal"]                  # ya ajustado por direction internamente
-    score_parity  = parity["signal"]  * dir_mult
-    score_enso    = enso["signal"]    * dir_mult
-    score_climate = climate["signal"] * dir_mult
-    score_carry   = carry["signal"]   * dir_mult
-    score_comex   = comex["signal"]   * dir_mult
-    score_fire    = fire["signal"]    * dir_mult
+    score_brl          = brl["signal"]          * dir_mult
+    score_brent        = brent["signal"]        * dir_mult
+    score_corr         = corr["signal"]                      # ajustado internamente
+    score_parity       = parity["signal"]       * dir_mult
+    score_enso         = enso["signal"]         * dir_mult
+    score_climate      = climate["signal"]      * dir_mult
+    score_carry        = carry["signal"]        * dir_mult
+    score_comex        = comex["signal"]        * dir_mult
+    score_fire         = fire["signal"]         * dir_mult
+    score_harvest_pace = harvest_pace["signal"] * dir_mult
+    score_crop_stress  = crop_stress["signal"]  * dir_mult
+    score_rainfall     = rainfall["signal"]     * dir_mult
 
     macro_score = (score_brl + score_brent + score_corr + score_parity
                    + score_enso + score_climate + score_carry
-                   + score_comex + score_fire)   # −9 a +9
+                   + score_comex + score_fire
+                   + score_harvest_pace + score_crop_stress + score_rainfall)  # −12 a +12
 
-    # Thresholds escalados al rango ±9
-    if macro_score >= 7:
+    # Thresholds escalados al rango ±12
+    if macro_score >= 9:
         macro_bias = "STRONG_" + direction.upper()
-    elif macro_score >= 3:
+    elif macro_score >= 4:
         macro_bias = direction.upper()
-    elif macro_score <= -7:
+    elif macro_score <= -9:
         macro_bias = "STRONG_CONTRA"
-    elif macro_score <= -3:
+    elif macro_score <= -4:
         macro_bias = "CONTRA"
     else:
         macro_bias = "NEUTRAL"
 
     return {
-        "brl":         brl,
-        "brent":       brent,
-        "corr":        corr,
-        "parity":      parity,
-        "enso":        enso,
-        "climate":     climate,
-        "carry":       carry,
-        "comex":       comex,
-        "fire":        fire,
-        "macro_score": macro_score,
-        "macro_bias":  macro_bias,
-        "direction":   direction.upper(),
+        "brl":          brl,
+        "brent":        brent,
+        "corr":         corr,
+        "parity":       parity,
+        "enso":         enso,
+        "climate":      climate,
+        "carry":        carry,
+        "comex":        comex,
+        "fire":         fire,
+        "harvest_pace": harvest_pace,
+        "crop_stress":  crop_stress,
+        "rainfall":     rainfall,
+        "macro_score":  macro_score,
+        "macro_bias":   macro_bias,
+        "direction":    direction.upper(),
     }
