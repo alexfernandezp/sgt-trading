@@ -50,20 +50,12 @@ ANOMALY_THRESH   = 1.5   # |z| > 1.5 → anomaly flag
 def _init_ee() -> bool:
     try:
         import ee
-        from config_env import GEE_PROJECT_ID
+        from config import GEE_PROJECT_ID
         if GEE_PROJECT_ID:
             ee.Initialize(project=GEE_PROJECT_ID)
         else:
             ee.Initialize()
         return True
-    except ImportError:
-        try:
-            import ee
-            ee.Initialize()
-            return True
-        except Exception as e:
-            logger.warning("GEE init: %s", e)
-            return False
     except Exception as e:
         logger.warning("GEE init: %s", e)
         return False
