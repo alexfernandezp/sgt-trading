@@ -384,6 +384,7 @@ class SignalDailyLog(Base):
     fwd_ret_5d      = Column(Numeric(8, 4))                # retorno % SBN front-month +5 días
     fwd_ret_10d     = Column(Numeric(8, 4))                # retorno % +10 días
     fwd_ret_20d     = Column(Numeric(8, 4))                # retorno % +20 días
+    is_carry        = Column(Boolean, default=False)       # True = forward-fill (no hay dato nuevo ese día)
     created_at      = Column(DateTime, default=datetime.utcnow)
     __table_args__  = (UniqueConstraint("date", "signal_name", name="uq_signal_log_date_name"),)
 

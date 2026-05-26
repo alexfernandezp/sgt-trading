@@ -99,11 +99,50 @@ def compute_ic_weights(session, window_days: int = 180,
     if not rows:
         return {"weights": {}, "n_calibrated": 0, "n_equal_weight": 0, "coverage_days": 0}
 
-    # Agrupar por señal
+    # Agrupar por señal con forward fill de gaps
+    # Un gap ocurre cuando una señal infrecuente (CONAB, GEE) no tiene dato ese día.
+    # El carry forward ya lo hace signal_logger; esto es una red de seguridad adicional.
     from collections import defaultdict
-    grouped = defaultdict(list)
+
+    # Índice: {(signal_name, date): (direction, fwd_ret)}
+    raw_by_signal_date = defaultdict(dict)
+    all_dates_set = set()
     for signal_name, direction, fwd_ret in rows:
-        grouped[signal_name].append((direction, float(fwd_ret)))
+        # Nota: rows es (signal_name, direction, fwd_ret_Nd) — date no está en SELECT
+        # Recuperar date requires a different query — simplificamos agrupando solo por señal
+        raw_by_signal_date[signal_name]  # touch
+
+    # Re-query con fecha para hacer forward fill correcto
+    rows_with_date = session.execute(
+        select(
+            SignalDailyLog.date,
+            SignalDailyLog.signal_name,
+            SignalDailyLog.direction,
+            getattr(SignalDailyLog, col_attr),
+        )
+        .where(and_(
+            SignalDailyLog.date >= cutoff,
+            getattr(SignalDailyLog, col_attr).isnot(None),
+            SignalDailyLog.direction.isnot(None),
+        ))
+        .order_by(SignalDailyLog.date)
+    ).fetchall()
+
+    # Construir series por señal con forward fill de gaps entre observaciones reales
+    signal_series: dict[str, list[tuple]] = defaultdict(list)
+    all_dates_set = sorted(set(r[0] for r in rows_with_date))
+
+    last_known: dict[str, tuple] = {}
+    for d in all_dates_set:
+        day_data = {r[1]: (r[2], float(r[3])) for r in rows_with_date if r[0] == d}
+        for sig_name in (set(last_known) | set(day_data)):
+            if sig_name in day_data:
+                last_known[sig_name] = day_data[sig_name]
+            # Si no hay dato hoy pero hay último conocido: forward fill silencioso
+            if sig_name in last_known:
+                signal_series[sig_name].append(last_known[sig_name])
+
+    grouped = signal_series
 
     weights = {}
     n_calibrated = 0
