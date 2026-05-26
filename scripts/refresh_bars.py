@@ -37,10 +37,10 @@ def refresh(session):
 
 
 def show_macro(session):
-    """Muestra contexto macro desde price_history (Yahoo): BRL, Brent, White Sugar."""
+    """Muestra contexto macro desde price_history (Yahoo): BRL, Brent."""
     rows = session.execute(text(
         "SELECT DISTINCT ON (instrument) instrument, close FROM price_history "
-        "WHERE instrument IN ('BRLUSD','BRENT','WHITE_SUGAR','SBN26','SBV26') "
+        "WHERE instrument IN ('BRLUSD','BRENT','SBN26','SBV26') "
         "ORDER BY instrument, date DESC"
     )).fetchall()
     data = {r[0]: float(r[1]) for r in rows}
@@ -52,7 +52,6 @@ def show_macro(session):
     sbv26 = data.get("SBV26", 0)
     brl   = data.get("BRLUSD", 0)
     brent = data.get("BRENT", 0)
-    ws    = data.get("WHITE_SUGAR", 0)
 
     print()
     print("  --- CONTEXTO MACRO (settlement ayer) ---")
@@ -65,12 +64,6 @@ def show_macro(session):
         print("  BRL/USD : %.4f  (%s)" % (brl, signal))
     if brent:
         print("  Brent   : $%.2f/bbl" % brent)
-    if ws and sbn26:
-        LBS_PER_TONNE = 2204.62
-        raw_usd_t = sbn26 * LBS_PER_TONNE / 100
-        wsp = round(ws - raw_usd_t, 2)
-        signal = "ALTO bullish raw" if wsp > 130 else ("BAJO bearish raw" if wsp < 70 else "normal")
-        print("  WSP     : $%.2f/t (White Sugar premium vs raw — %s)" % (wsp, signal))
 
 
 def show_today(session, instrument="SBN26"):

@@ -24,7 +24,6 @@ INSTRUMENTS = {
     "SBN26":      {"yf_ticker": "SBN26.NYB", "fallback": None,   "description": "Sugar No.11 Jul 2026"},
     "SBV26":      {"yf_ticker": "SBV26.NYB", "fallback": None,   "description": "Sugar No.11 Oct 2026"},
     "SB_CONT":    {"yf_ticker": "SB=F",      "fallback": None,   "description": "Sugar No.11 continuo"},
-    "WHITE_SUGAR":{"yf_ticker": "SW=F",      "fallback": None,   "description": "White Sugar No.5 London"},
     "BRENT":      {"yf_ticker": "BZ=F",      "fallback": "CL=F", "description": "Brent Crude Oil"},
     "BRLUSD":     {"yf_ticker": "BRL=X",     "fallback": None,   "description": "Brazilian Real / USD"},
 }

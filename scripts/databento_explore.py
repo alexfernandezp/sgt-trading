@@ -1,6 +1,5 @@
 """
 Explora datasets adicionales de Databento relevantes para Sugar No.11:
-- IFEU.IMPACT: White Sugar No.5 London (SW)
 - GLBX.MDP3: BRL/USD futuros (6L), Brent (BB), Ethanol (EH)
 """
 import sys, os
@@ -17,8 +16,6 @@ client = db.Historical(DATABENTO_API_KEY)
 
 CANDIDATES = [
     # (dataset, symbol, stype, descripcion)
-    ("IFEU.IMPACT", "SF.c.0",  "continuous", "White Sugar No.5 London continuo"),
-    ("IFEU.IMPACT", "SF.FUT",  "parent",     "White Sugar No.5 parent (todos contratos)"),
     ("GLBX.MDP3",  "6L.c.0",  "continuous", "BRL/USD futuros CME continuo"),
     ("GLBX.MDP3",  "BZ.c.0",  "continuous", "Brent crude CME continuo"),
     ("GLBX.MDP3",  "BB.c.0",  "continuous", "Brent crude ICE via CME continuo"),
