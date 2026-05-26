@@ -967,7 +967,8 @@ def print_macro_signals(macro, direction):
         print("  Fuego %s : focos=%d  z=%+.2f  baseline=%.0f±%.0f (%s)  [%s]" % (
             fst, fcurr or 0, fz, fmean or 0, fstd or 0, fmo_s, fb))
     else:
-        print("  Fuego SP+PR: sin datos (ejecutar fetch_fires)")
+        fdesc = fire.get("description", "sin datos")
+        print("  Fuego %s: %s" % (fst, fdesc))
 
     # ── Riesgo monzón India (ENSO → predicción Jun-Sep) ─────────────────────
     monsoon = enso.get("india_monsoon_risk") if enso else None
@@ -1625,7 +1626,7 @@ def run():
         enso_d = macro.get("enso",    {}).get("bias", "N/D")
         clim_d = macro.get("climate", {}).get("bias", "N/D")
         carr_d = macro.get("carry",   {}).get("bias", "N/D")
-        print("  Macro      : score=%+d/7  bias=%s" % (ms_, mb))
+        print("  Macro      : score=%+d/12  bias=%s" % (ms_, mb))
         print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
             brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
@@ -1641,7 +1642,7 @@ def run():
         a5_bias = santos_signal.get("bias", "NEUTRAL")
         a5_sig  = santos_signal.get("signal_a5", 0)
         n_tot   = santos_signal.get("n_ships", 0)
-        z_val   = santos_signal.get("z_combined", 0)
+        z_val   = santos_signal.get("z_combined") or 0
         print("  Santos A5  : %s (A5=%+.2f  z=%.2f  %d barcos ACUCAR)" % (
             a5_bias, a5_sig, z_val, n_tot))
         if a5_bias != "NEUTRAL" and a5_bias != direction and direction != "NEUTRAL":

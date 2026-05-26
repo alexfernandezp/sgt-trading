@@ -107,22 +107,19 @@ def _get_spread_prices() -> Optional[dict]:
     """Descarga precios SBN26 y SBV26 de Yahoo Finance."""
     try:
         import yfinance as yf
+        import pandas as pd
         df = yf.download(["SBN26.NYB", "SBV26.NYB"], period="5d", interval="1d",
                          progress=False, auto_adjust=True)
         if df is None or df.empty:
             return None
 
-        if isinstance(df.columns, pd.MultiIndex if hasattr(df.columns, 'levels') else type(None)):
+        if isinstance(df.columns, pd.MultiIndex):
             try:
                 close = df["Close"]
             except KeyError:
-                import pandas as pd
                 close = df.xs("Close", axis=1, level=0)
         else:
-            import pandas as pd
             close = df["Close"] if "Close" in df.columns else df
-
-        import pandas as pd
         if not isinstance(close, pd.DataFrame):
             return None
 
