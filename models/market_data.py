@@ -361,3 +361,35 @@ class GeeMetric(Base):
     created_at      = Column(DateTime, default=datetime.utcnow)
     __table_args__  = (UniqueConstraint("obs_date", "poi_id", "metric",
                                         name="uq_gee_date_poi_metric"),)
+
+
+class ConabCanaLevantamento(Base):
+    __tablename__   = "conab_cana_levantamento"
+    id              = Column(Integer, primary_key=True)
+    season          = Column(String(10), nullable=False)   # "2025/26"
+    levantamento    = Column(Integer,    nullable=False)   # 1-6
+    pub_date        = Column(Date)
+    # Producción total
+    cane_total_mt   = Column(Numeric(8, 2))   # millones de toneladas
+    area_mha        = Column(Numeric(6, 3))   # millones de hectáreas
+    yield_kg_ha     = Column(Numeric(8, 1))   # kg/ha
+    sugar_total_mt  = Column(Numeric(7, 2))   # millones de toneladas
+    ethanol_cana_blt      = Column(Numeric(6, 2))   # billones de litros (caña)
+    ethanol_total_blt     = Column(Numeric(6, 2))   # billones de litros (caña+maíz)
+    ethanol_hydrous_blt   = Column(Numeric(6, 2))
+    ethanol_anhydrous_blt = Column(Numeric(6, 2))
+    # YoY
+    yoy_cane_pct    = Column(Numeric(6, 2))
+    yoy_sugar_pct   = Column(Numeric(6, 2))
+    yoy_ethanol_cana_pct  = Column(Numeric(6, 2))
+    # Revisión intra-temporada (vs levantamento anterior)
+    revision_sugar_pct    = Column(Numeric(6, 2))
+    revision_ethanol_pct  = Column(Numeric(6, 2))
+    # Estado SP
+    sp_sugar_mt     = Column(Numeric(7, 2))
+    sp_cane_mt      = Column(Numeric(8, 2))
+    pdf_url         = Column(Text)
+    updated_at      = Column(DateTime)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    __table_args__  = (UniqueConstraint("season", "levantamento",
+                                        name="uq_conab_season_lev"),)

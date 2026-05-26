@@ -445,6 +445,16 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         except Exception as e:
             logger.warning("macro_signals: fire error: %s", e)
 
+    # CONAB — Boletim Safra Cana (revisión intra-temporada + YoY)
+    conab = {"signal": 0, "bias": "NEUTRAL",
+             "description": "CONAB: sin datos (ejecutar fetch_conab.py)"}
+    if session is not None:
+        try:
+            from services.conab_signal import compute_conab_signal
+            conab = compute_conab_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: conab error: %s", e)
+
     # GEE — Harvest Pace (NDVI BR+TH+IN vs baseline 5yr)
     harvest_pace = {"signal": 0, "bias": "NEUTRAL",
                     "description": "Harvest pace: sin datos GEE (ejecutar run_gee_crops.py)"}
@@ -487,14 +497,15 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     score_carry        = carry["signal"]        * dir_mult
     score_comex        = comex["signal"]        * dir_mult
     score_fire         = fire["signal"]         * dir_mult
+    score_conab        = conab["signal"]        * dir_mult
     score_harvest_pace = harvest_pace["signal"] * dir_mult
     score_crop_stress  = crop_stress["signal"]  * dir_mult
     score_rainfall     = rainfall["signal"]     * dir_mult
 
     macro_score = (score_brl + score_brent + score_corr + score_parity
                    + score_enso + score_climate + score_carry
-                   + score_comex + score_fire
-                   + score_harvest_pace + score_crop_stress + score_rainfall)  # −12 a +12
+                   + score_comex + score_fire + score_conab
+                   + score_harvest_pace + score_crop_stress + score_rainfall)  # −13 a +13
 
     # Thresholds escalados al rango ±12
     if macro_score >= 9:
@@ -518,6 +529,7 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         "carry":        carry,
         "comex":        comex,
         "fire":         fire,
+        "conab":        conab,
         "harvest_pace": harvest_pace,
         "crop_stress":  crop_stress,
         "rainfall":     rainfall,

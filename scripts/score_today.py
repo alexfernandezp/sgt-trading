@@ -814,8 +814,8 @@ def print_macro_signals(macro, direction):
     bias_tag = bias_map.get(bias, "[%s]" % bias)
 
     print()
-    print("  -- MACRO (BRL + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego + GEE) --")
-    print("  Score macro: %+d / 12  %s   (dirección: %s)" % (score, bias_tag, direction))
+    print("  -- MACRO (BRL + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego + CONAB + GEE) --")
+    print("  Score macro: %+d / 13  %s   (dirección: %s)" % (score, bias_tag, direction))
 
     # BRL/USD — brl_per_usd = USDBRL ≈ 5.0 (quote mercado), usd_per_brl ≈ 0.20
     brl_q  = brl.get("brl_per_usd")   # cuántos BRL por 1 USD (≈5.0)
@@ -969,6 +969,24 @@ def print_macro_signals(macro, direction):
     else:
         fdesc = fire.get("description", "sin datos")
         print("  Fuego %s: %s" % (fst, fdesc))
+
+    # ── CONAB — Boletim Safra Cana ───────────────────────────────────────────
+    conab_s = macro.get("conab", {})
+    conab_bias = conab_s.get("bias", "NEUTRAL")
+    if conab_s.get("sugar_total_mt") is not None:
+        rev   = conab_s.get("revision_sugar_pct")
+        yoy   = conab_s.get("yoy_sugar_pct")
+        sug   = conab_s.get("sugar_total_mt")
+        szn   = conab_s.get("season", "?")
+        lev   = conab_s.get("levantamento", "?")
+        sp_s  = conab_s.get("sp_sugar_mt")
+        rev_s = f"rev={rev:+.1f}%" if rev is not None else "1er lev"
+        yoy_s = f"YoY={yoy:+.1f}%" if yoy is not None else ""
+        sp_str = f"  SP={sp_s:.1f}Mt" if sp_s else ""
+        print("  CONAB %s %sº lev: azúcar=%.1fMt  %s  %s%s  [%s]" % (
+            szn, lev, sug, rev_s, yoy_s, sp_str, conab_bias))
+    else:
+        print("  CONAB: %s" % conab_s.get("description", "sin datos"))
 
     # ── Riesgo monzón India (ENSO → predicción Jun-Sep) ─────────────────────
     monsoon = enso.get("india_monsoon_risk") if enso else None
@@ -1626,7 +1644,7 @@ def run():
         enso_d = macro.get("enso",    {}).get("bias", "N/D")
         clim_d = macro.get("climate", {}).get("bias", "N/D")
         carr_d = macro.get("carry",   {}).get("bias", "N/D")
-        print("  Macro      : score=%+d/12  bias=%s" % (ms_, mb))
+        print("  Macro      : score=%+d/13  bias=%s" % (ms_, mb))
         print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
             brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
