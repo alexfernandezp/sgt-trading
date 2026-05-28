@@ -33,6 +33,8 @@ MACRO_SIGNAL_NAMES = [
     "macro_harvest_pace",
     "macro_crop_stress",
     "macro_rainfall_spi",
+    "macro_usda_stu_pct",
+    "macro_dxy_vs_ma20",
 ]
 
 # Señales COT/spread que pueden calibrarse también
@@ -224,6 +226,8 @@ def compute_weighted_macro_score(session, macro: Optional[dict],
     hp     = mac.get("harvest_pace", {}) or {}
     cs     = mac.get("crop_stress",  {}) or {}
     rf     = mac.get("rainfall",     {}) or {}
+    usda   = mac.get("usda",    {}) or {}
+    dxy    = mac.get("dxy",     {}) or {}
 
     def _b(bias_str):
         if not bias_str:
@@ -250,6 +254,8 @@ def compute_weighted_macro_score(session, macro: Optional[dict],
         "macro_harvest_pace":    _b(hp.get("bias")),
         "macro_crop_stress":     _b(cs.get("bias")),
         "macro_rainfall_spi":    _b(rf.get("bias")),
+        "macro_usda_stu_pct":    _b(usda.get("bias")),
+        "macro_dxy_vs_ma20":     _b(dxy.get("bias")),
     }
 
     raw_score = 0.0

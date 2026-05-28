@@ -359,28 +359,83 @@ def compute_intraday_correlation(direction: str = "LONG") -> dict:
 # Combined macro signal
 # ---------------------------------------------------------------------------
 
+def compute_dxy_signal() -> dict:
+    """
+    Señal DXY (US Dollar Index).
+
+    DXY alto (USD fuerte) → commodities cotizados en USD se abaratan → bajista azúcar.
+    DXY bajo  (USD débil) → commodities en USD se encarecen → alcista azúcar.
+
+    Devuelve signal, bias, dxy_value, vs_ma20_pct.
+    """
+    try:
+        import yfinance as yf
+        df = yf.download("DX-Y.NYB", period="30d", interval="1d",
+                         progress=False, auto_adjust=True)
+        if df is None or len(df) < 5:
+            return {"signal": 0, "bias": "NEUTRAL", "dxy_value": None,
+                    "description": "DXY: sin datos"}
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    except Exception as e:
+        logger.warning("dxy_signal: %s", e)
+        return {"signal": 0, "bias": "NEUTRAL", "dxy_value": None,
+                "description": "DXY: error descarga"}
+
+    latest = float(df["Close"].iloc[-1])
+    prev1d = float(df["Close"].iloc[-2]) if len(df) >= 2 else latest
+    ma20   = float(df["Close"].tail(20).mean())
+
+    chg_1d  = (latest - prev1d) / prev1d * 100
+    vs_ma20 = (latest - ma20) / ma20 * 100
+
+    if vs_ma20 < -1.0:
+        signal = 1; bias = "LONG"
+        desc = "DXY=%.2f (%+.1f%% vs MA20) — USD débil → alcista commodities → LONG azúcar" % (latest, vs_ma20)
+    elif vs_ma20 > 1.0:
+        signal = -1; bias = "SHORT"
+        desc = "DXY=%.2f (%+.1f%% vs MA20) — USD fuerte → bajista commodities → SHORT azúcar" % (latest, vs_ma20)
+    else:
+        signal = 0; bias = "NEUTRAL"
+        desc = "DXY=%.2f (%+.1f%% vs MA20) — USD neutral" % (latest, vs_ma20)
+
+    return {
+        "dxy_value":     round(latest, 3),
+        "vs_ma20_pct":   round(vs_ma20, 3),
+        "change_1d_pct": round(chg_1d, 3),
+        "signal":        signal,
+        "bias":          bias,
+        "description":   desc,
+    }
+
+
 def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     """
-    Combina 9 señales macro para azúcar ICE No.11.
+    Combina 15 señales macro para azúcar ICE No.11.
 
     Señales incluidas:
-      1. BRL/USD          — tipo de cambio real brasileño
-      2. Brent            — paridad etanol/energía
-      3. Correl intraday  — correlaciones 5m Brent/BRL vs SB
-      4. Paridad etanol   — CEPEA hydrous vs ICE (fundamental mills Brasil)
-      5. ENSO / ONI       — El Niño/La Niña: impacto estacional producción
-      6. Déficit hídrico  — P-ET30/90d SP + NDVI Sentinel-2
-      7. Full Carry       — spread SBN/SBV vs coste teórico de almacenamiento
-      8. Comex Stat       — ritmo exportaciones YoY azúcar Brasil (MDIC)
-      9. INPE Fuego       — anomalía focos incendio SP vs baseline estacional
+      1.  BRL/USD          — tipo de cambio real brasileño
+      2.  Brent            — paridad etanol/energía
+      3.  Correl intraday  — correlaciones 5m Brent/BRL vs SB
+      4.  Paridad etanol   — CEPEA hydrous vs ICE (fundamental mills Brasil)
+      5.  ENSO / ONI       — El Niño/La Niña: impacto estacional producción
+      6.  Déficit hídrico  — P-ET30/90d SP + NDVI Sentinel-2
+      7.  Full Carry       — spread SBN/SBV vs coste teórico de almacenamiento
+      8.  Comex Stat       — ritmo exportaciones YoY azúcar Brasil (MDIC)
+      9.  INPE Fuego       — anomalía focos incendio SP vs baseline estacional
+      10. CONAB            — Boletim Safra Cana (revisión producción Brasil)
+      11. GEE Harvest Pace — NDVI BR+TH+IN vs baseline 5yr
+      12. GEE Crop Stress  — LST + NDWI BR+TH+IN
+      13. GEE Rainfall SPI — CHIRPS BR+TH+IN
+      14. USDA WASDE       — Stocks-to-Use global azúcar (balance oferta/demanda)
+      15. DXY              — Índice dólar (USD fuerte = bajista commodities)
 
-    macro_score: −9 a +9
+    macro_score: −15 a +15
     Thresholds bias:
-      ≥ 7  → STRONG direction  (≥78% señales alineadas)
-      ≥ 3  → direction
-      ≤ −3 → CONTRA
-      ≤ −7 → STRONG_CONTRA
-      else → NEUTRAL
+      ≥ 10 → STRONG direction
+      ≥  4 → direction
+      ≤ −4 → CONTRA
+      ≤ −10 → STRONG_CONTRA
+      else  → NEUTRAL
     """
     brl   = compute_brl_signal()
     brent = compute_brent_signal()
@@ -485,6 +540,24 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         except Exception as e:
             logger.warning("macro_signals: rainfall error: %s", e)
 
+    # USDA WASDE — Stocks-to-Use ratio global azúcar
+    usda = {"signal": 0, "bias": "NEUTRAL",
+            "description": "USDA WASDE: sin datos (py scripts/fetch_usda.py)"}
+    if session is not None:
+        try:
+            from services.usda_signal import compute_usda_signal
+            usda = compute_usda_signal(session)
+        except Exception as e:
+            logger.warning("macro_signals: usda error: %s", e)
+
+    # DXY — Índice dólar (USD fuerte = bajista commodities)
+    dxy = {"signal": 0, "bias": "NEUTRAL",
+           "description": "DXY: sin datos"}
+    try:
+        dxy = compute_dxy_signal()
+    except Exception as e:
+        logger.warning("macro_signals: dxy error: %s", e)
+
     # ── Scoring ──────────────────────────────────────────────────────────────
     dir_mult = 1 if direction.upper() == "LONG" else -1
 
@@ -501,18 +574,20 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     score_harvest_pace = harvest_pace["signal"] * dir_mult
     score_crop_stress  = crop_stress["signal"]  * dir_mult
     score_rainfall     = rainfall["signal"]     * dir_mult
+    score_usda         = usda["signal"]         * dir_mult
+    score_dxy          = dxy["signal"]          * dir_mult
 
     macro_score = (score_brl + score_brent + score_corr + score_parity
                    + score_enso + score_climate + score_carry
                    + score_comex + score_fire + score_conab
-                   + score_harvest_pace + score_crop_stress + score_rainfall)  # −13 a +13
+                   + score_harvest_pace + score_crop_stress + score_rainfall
+                   + score_usda + score_dxy)  # −15 a +15
 
-    # Thresholds escalados al rango ±12
-    if macro_score >= 9:
+    if macro_score >= 10:
         macro_bias = "STRONG_" + direction.upper()
     elif macro_score >= 4:
         macro_bias = direction.upper()
-    elif macro_score <= -9:
+    elif macro_score <= -10:
         macro_bias = "STRONG_CONTRA"
     elif macro_score <= -4:
         macro_bias = "CONTRA"
@@ -533,6 +608,8 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
         "harvest_pace": harvest_pace,
         "crop_stress":  crop_stress,
         "rainfall":     rainfall,
+        "usda":         usda,
+        "dxy":          dxy,
         "macro_score":  macro_score,
         "macro_bias":   macro_bias,
         "direction":    direction.upper(),

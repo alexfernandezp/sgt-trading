@@ -816,8 +816,8 @@ def print_macro_signals(macro, direction):
     bias_tag = bias_map.get(bias, "[%s]" % bias)
 
     print()
-    print("  -- MACRO (BRL + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego + CONAB + GEE) --")
-    print("  Score macro: %+d / 13  %s   (dirección: %s)" % (score, bias_tag, direction))
+    print("  -- MACRO (BRL + Brent + Correl + Paridad + ENSO + Clima + Carry + Comex + Fuego + CONAB + GEE + USDA + DXY) --")
+    print("  Score macro: %+d / 15  %s   (dirección: %s)" % (score, bias_tag, direction))
 
     # BRL/USD — brl_per_usd = USDBRL ≈ 5.0 (quote mercado), usd_per_brl ≈ 0.20
     brl_q  = brl.get("brl_per_usd")   # cuántos BRL por 1 USD (≈5.0)
@@ -1054,6 +1054,46 @@ def print_macro_signals(macro, direction):
             rf_score or 0, "  ".join(parts), rf_bias))
     else:
         print("  Rainfall   : sin datos GEE (py scripts/run_gee_crops.py)")
+
+    # ── USDA WASDE — Stocks-to-Use global ───────────────────────────────────
+    usda = macro.get("usda", {})
+    stu  = usda.get("stu_pct")
+    umyr = usda.get("marketing_year")
+    uprd = usda.get("production_mt")
+    ucon = usda.get("consumption_mt")
+    uend = usda.get("ending_stocks_mt")
+    ubias = usda.get("bias", "NEUTRAL")
+    if stu is not None:
+        yr_s = ("%s/%s" % (umyr, str(umyr + 1)[2:])) if umyr else "?"
+        prd_s = ("  Prod=%.1fMt" % uprd) if uprd else ""
+        con_s = ("  Cons=%.1fMt" % ucon) if ucon else ""
+        end_s = ("  EndStk=%.1fMt" % uend) if uend else ""
+        # Breakdown principales productores (último año)
+        cprod = usda.get("country_production", {})
+        br_p  = cprod.get("BR", [{}])[-1].get("production_mt") if cprod.get("BR") else None
+        in_p  = cprod.get("IN", [{}])[-1].get("production_mt") if cprod.get("IN") else None
+        th_p  = cprod.get("TH", [{}])[-1].get("production_mt") if cprod.get("TH") else None
+        bkd_parts = []
+        if br_p: bkd_parts.append("BR=%.1fMt" % br_p)
+        if in_p: bkd_parts.append("IN=%.1fMt" % in_p)
+        if th_p: bkd_parts.append("TH=%.1fMt" % th_p)
+        bkd_s = ("  [%s]" % "  ".join(bkd_parts)) if bkd_parts else ""
+        print("  USDA %s : STU=%.1f%%%s%s%s%s  [%s]" % (
+            yr_s, stu, prd_s, con_s, end_s, bkd_s, ubias))
+    else:
+        print("  USDA WASDE : %s" % usda.get("description", "sin datos (py scripts/fetch_usda.py)"))
+
+    # ── DXY — Índice dólar ────────────────────────────────────────────────────
+    dxy  = macro.get("dxy", {})
+    dxyv = dxy.get("dxy_value")
+    dxym = dxy.get("vs_ma20_pct")
+    dxy1 = dxy.get("change_1d_pct")
+    dxyb = dxy.get("bias", "NEUTRAL")
+    if dxyv is not None:
+        print("  DXY        : %.3f  1d=%+.2f%%  vs_MA20=%+.1f%%  [%s]" % (
+            dxyv, dxy1 or 0, dxym or 0, dxyb))
+    else:
+        print("  DXY        : sin datos")
 
 
 # ── Vol surface display ───────────────────────────────────────────────────────
@@ -1661,9 +1701,14 @@ def run():
         enso_d = macro.get("enso",    {}).get("bias", "N/D")
         clim_d = macro.get("climate", {}).get("bias", "N/D")
         carr_d = macro.get("carry",   {}).get("bias", "N/D")
-        print("  Macro      : score=%+d/13  bias=%s" % (ms_, mb))
+        usda_d = macro.get("usda",    {}).get("bias", "N/D")
+        stu_v  = macro.get("usda",    {}).get("stu_pct")
+        dxy_d  = macro.get("dxy",     {}).get("bias", "N/D")
+        stu_s  = ("  STU=%.1f%%" % stu_v) if stu_v is not None else ""
+        print("  Macro      : score=%+d/15  bias=%s" % (ms_, mb))
         print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
             brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
+        print("               USDA=%s%s  DXY=%s" % (usda_d, stu_s, dxy_d))
         if ic_result:
             print(format_ic_summary(ic_result))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":

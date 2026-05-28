@@ -1,0 +1,168 @@
+# GEE Crop Production Estimator — parametros por pais
+#
+# Arquitectura Stage 1 (MVP):
+#   Sin Random Forest. Mask = ESA WorldCover 2021 clase 40 (Croplands).
+#   El base_sugar_yield_t_per_ha absorbe tanto el rendimiento real como la
+#   fraccion de WorldCover-cropland que es efectivamente el cultivo objetivo.
+#   Se calibra minimizando RMSE contra produccion historica conocida.
+#
+# Formato de boundary:
+#   type: bbox → coords [[lon_min,lat_min],[lon_max,lat_min],[lon_max,lat_max],[lon_min,lat_max]]
+#   type: polygon → coords lista de vertices [lon, lat]
+#
+# season_spans_year: true si la temporada cruza el 1 de enero
+#   (India Oct-Abr: Oct-Dic de season_year, Ene-Abr de season_year+1)
+
+countries:
+
+  india:
+    name: "India"
+    crop: "sugarcane"
+    usda_code: "IN"
+    sensor: "sentinel2"
+    boundary:
+      type: "polygon"
+      # Cubre UP (~45% produccion), Maharashtra (~25%), Karnataka (~10%)
+      # UP: Saharanpur-Muzaffarnagar-Meerut al norte hasta Gorakhpur
+      # MH: Pune-Solapur-Kolhapur-Nashik
+      # KA: Belgaum-Mandya
+      coords:
+        - [73.5, 16.5]   # MH suroeste
+        - [84.0, 16.5]   # Este (limite AP/TG)
+        - [84.0, 29.0]   # Norte UP (Saharanpur)
+        - [73.5, 29.0]   # Noroeste
+        - [73.5, 16.5]
+    growing_season:
+      months: [10, 11, 12, 1, 2, 3, 4]   # Oct-Abr
+      start_month: 10
+      end_month: 4
+      season_spans_year: true             # Oct de season_year → Abr de season_year+1
+    peak_months: [1, 2, 3]               # meses de maxima produccion (Jan-Mar)
+    ndvi_threshold: 0.38                  # umbral minimo NDVI para incluir pixel
+    worldcover_classes: [40]             # 40=Croplands (ESA WorldCover 2021)
+    scale_m: 1000                        # GEE reduceRegion scale (India: gran region → 1km)
+    # Rendimiento azucar por hectarea WorldCover-cropland (calibrado vs ISMA GROSS 2020-2025)
+    # Nota: no es rendimiento agronómico puro; absorbe fraccion cultivo/cropland
+    # OLS 2026-05-28: RMSE=3.120Mt, MAE=2.628Mt, Bias=-2.879Mt (6 temporadas)
+    base_sugar_yield_t_per_ha: 0.3930
+    calibration_source: "isma_gross"
+    calibration_seasons: [2020, 2021, 2022, 2023, 2024, 2025]
+    baseline_years: 5
+    # Seed de produccion BRUTA (pre-desvío etanol) — fallback cuando DB vacía.
+    # Fuente: ISMA season-end + ingestion/india_ethanol._GROSS_PRODUCTION_SEED
+    # La capa viva (gee/calibration_data.py) sobreescribe estos valores con datos DB.
+    _calibration_seed:
+      2020: 32.0    # ISMA 2020-21 gross ~320 LMT
+      2021: 32.5    # ISMA 2021-22... ver nota naming en calibration_data.py
+      2022: 39.4    # ISMA gross record ~394 LMT
+      2023: 36.6    # ISMA gross ~366 LMT
+      2024: 29.5    # ISMA 2024-25 gross ~295 LMT (user confirmed)
+      2025: 32.4    # ISMA 2025-26 3rd advance gross ~324 LMT
+    # Desvío etanol seed (Mt) — para referencia. La fuente viva es india_ethanol.py
+    _ethanol_diversion_seed:
+      2020: 0.8
+      2021: 2.0
+      2022: 3.4
+      2023: 3.8
+      2024: 3.4
+      2025: 3.1
+    # Parámetros de estrés climático (LST + SPI) — pendiente integración Landsat/ERA5
+    stress_periods:
+      lst_months: [9, 10, 11]           # Sep-Nov: maduración caña, crítico para CCS%
+      # La caña necesita noches frías (<25°C) para acumular sacarosa.
+      # Apr-Sep (crecimiento vegetativo) no correlaciona — NDVI India es plano en ese período.
+      # Sep-Nov es cuando salen los titulares de India y se mueve el mercado.
+      stress_spans_year: false          # Sep/Oct/Nov están dentro del mismo año civil que season_year
+      spi_months: [6, 7, 8, 9]          # Jun-Sep: monzón, déficit → menor tonelaje caña
+    stress_coefficients:
+      lst: null     # k_lst pendiente: penalty = k_lst × max(0, LST_anomaly_C)
+      spi: null     # k_spi pendiente: penalty = k_spi × max(0, -SPI)
+      parity: null  # k_parity pendiente: penalty = k_parity × max(0, parity_ratio - 1.0)
+
+  thailand:
+    name: "Thailand"
+    crop: "sugarcane"
+    usda_code: "TH"
+    sensor: "sentinel2"
+    boundary:
+      type: "polygon"
+      # Kanchanaburi, Suphanburi, Chiang Rai, Nakhon Sawan, Udon Thani, Khon Kaen
+      # Cubre principales zonas cañeras Norte/Central/Nordeste
+      coords:
+        - [98.5,  13.0]   # Oeste (frontera Myanmar)
+        - [103.0, 13.0]   # Este (frontera Laos/Camboya)
+        - [103.0, 18.5]   # Norte
+        - [98.5,  18.5]
+        - [98.5,  13.0]
+    growing_season:
+      months: [11, 12, 1, 2, 3, 4]      # Nov-Abr (crushing season)
+      start_month: 11
+      end_month: 4
+      season_spans_year: true            # Nov season_year → Abr season_year+1
+    peak_months: [1, 2, 3]
+    ndvi_threshold: 0.35
+    worldcover_classes: [40]
+    scale_m: 500
+    # Calibrado 2026-05-27 vs OCSB 2017-2022 (6 temporadas):
+    #   RMSE=6.54 Mt con 1.55 → factor 0.648 → yield 1.0036
+    #   RMSE residual ~2.58 Mt (NDVI no captura swings de precio/sequia en TH)
+    #   Confidence cap ajustado a 0.65 en SugarcaneEstimator_Thailand
+    base_sugar_yield_t_per_ha: 1.0036
+    calibration_source: "ocsb"
+    calibration_seasons: [2017, 2018, 2019, 2020, 2021, 2022]
+    baseline_years: 5
+    known_production_mt:
+      2017: 14.92   # 2017-18
+      2018: 14.59   # 2018-19
+      2019:  8.40   # 2019-20 (sequia)
+      2020:  7.56   # 2020-21
+      2021: 10.16   # 2021-22
+      2022: 11.06   # 2022-23 (OCSB final)
+    stress_periods:
+      lst_months: [11, 12, 1, 2, 3]    # Nov-Mar: durante crushing season
+      spi_months: [10, 11, 12]          # Oct-Dic: apertura temporada, crítico para CCS%
+    stress_coefficients:
+      lst: null
+      spi: null
+
+  brazil:
+    name: "Brazil Center-South"
+    crop: "sugarcane"
+    usda_code: "BR"
+    sensor: "sentinel2"
+    boundary:
+      type: "polygon"
+      # Centro-Sur: SP, MG (triangulo mineiro), GO, MS, MT
+      # Excluye Nordeste (Northeast Brazil - diferente temporada)
+      coords:
+        - [-55.0, -24.5]  # SP suroeste
+        - [-42.5, -24.5]  # SP/MG este
+        - [-42.5, -14.5]  # GO/MG norte
+        - [-55.0, -14.5]  # GO/MT noroeste
+        - [-55.0, -24.5]
+    growing_season:
+      months: [4, 5, 6, 7, 8, 9, 10, 11]  # Abr-Nov (cosecha Centro-Sur)
+      start_month: 4
+      end_month: 11
+      season_spans_year: false
+    peak_months: [7, 8, 9]               # Julio-Sep: pico molienda
+    ndvi_threshold: 0.40
+    worldcover_classes: [40]
+    scale_m: 500
+    base_sugar_yield_t_per_ha: 0.9462    # calibrado 2026-05-28 vs CONAB 2019-2023 (5 temporadas)
+    # RMSE residual ~4.98 Mt. Area 37.42M ha WorldCover absorbe fraccion cana/cropland (~8%)
+    calibration_source: "conab"
+    calibration_seasons: [2019, 2020, 2021, 2022, 2023]
+    baseline_years: 5
+    known_production_mt:
+      2019: 26.50   # 2019-20 CONAB (Mt azucar equivalente)
+      2020: 38.40   # 2020-21 CS record
+      2021: 32.01   # 2021-22 sequia
+      2022: 37.40   # 2022-23
+      2023: 42.50   # 2023-24 CONAB
+    stress_periods:
+      lst_months: [11, 12, 1, 2, 3]    # Nov-Mar: verano austral, crecimiento caña
+      spi_months: [11, 12, 1, 2]       # Nov-Feb: lluvias críticas pre-cosecha
+    stress_coefficients:
+      lst: null
+      spi: null

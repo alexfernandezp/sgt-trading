@@ -5,6 +5,9 @@
 # Datos binarios y CSVs de mercado (se regeneran)
 data/databento_raw/
 data/opciones/
+data/gee_cache/
+data/ec_cache/
+data/thailand_calibration.txt
 
 # Python
 __pycache__/

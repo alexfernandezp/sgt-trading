@@ -39,6 +39,9 @@ CARRY_FORWARD_SIGNALS = {
     "macro_carry_ratio",          # SOFR + spread: estable
     "macro_comex_yoy",            # COMEX: mensual
     "macro_fires_signal",         # INPE: puede fallar en fin de semana
+    "macro_usda_stu_pct",         # USDA WASDE: mensual (publicación ~día 12 con WASDE)
+    "macro_usda_prod_mt",
+    "macro_usda_cons_mt",
 }
 
 
@@ -177,6 +180,8 @@ def extract_signals(inputs: dict, brazil: Optional[dict],
     hp     = mac.get("harvest_pace", {}) or {}
     cs     = mac.get("crop_stress",  {}) or {}
     rf     = mac.get("rainfall",     {}) or {}
+    usda   = mac.get("usda",    {}) or {}
+    dxy    = mac.get("dxy",     {}) or {}
 
     # BRL: dato crudo = tipo de cambio real (USDBRL); derivado = % vs MA20
     add("macro_brl_per_usd",      "macro", brl.get("brl_per_usd"),    None)   # precio real BRL
@@ -224,6 +229,15 @@ def extract_signals(inputs: dict, brazil: Optional[dict],
     add("macro_harvest_pace",     "macro", hp.get("score_weighted"),   _bias(hp.get("bias")))
     add("macro_crop_stress",      "macro", cs.get("score_weighted"),   _bias(cs.get("bias")))
     add("macro_rainfall_spi",     "macro", rf.get("score_weighted"),   _bias(rf.get("bias")))
+
+    # USDA WASDE: dato crudo = STU% (Stocks-to-Use ratio global)
+    add("macro_usda_stu_pct",    "macro", usda.get("stu_pct"),        _bias(usda.get("bias")))
+    add("macro_usda_prod_mt",    "macro", usda.get("production_mt"),  None)   # producción global real Mt
+    add("macro_usda_cons_mt",    "macro", usda.get("consumption_mt"), None)   # consumo global real Mt
+
+    # DXY: dato crudo = nivel del índice dólar (≈104)
+    add("macro_dxy_value",       "macro", dxy.get("dxy_value"),       None)
+    add("macro_dxy_vs_ma20",     "macro", dxy.get("vs_ma20_pct"),     _bias(dxy.get("bias")))
 
     return rows
 

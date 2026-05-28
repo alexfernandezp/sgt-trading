@@ -334,6 +334,45 @@ class ParanaguaPortSnapshot(Base):
                                         name="uq_paranagua_date_page_ship"),)
 
 
+class IndiaEthanolDiversion(Base):
+    """
+    Desvío de azúcar a etanol en India por temporada de molienda.
+    Fuente: ISMA press releases, MoPNG ESY reports.
+    season_year = Oct del inicio de la temporada (ej. 2024 → Oct24-Apr25 = ISMA 2024-25).
+    """
+    __tablename__ = "india_ethanol_diversion"
+    id              = Column(Integer, primary_key=True)
+    season_year     = Column(Integer, nullable=False)
+    esy_year        = Column(Integer)                      # Nov de season_year (ESY start)
+    diversion_lmt   = Column(Numeric(8, 2))               # lakh metric tonnes azúcar equiv.
+    diversion_mt    = Column(Numeric(8, 3))               # Mt azúcar equivalente
+    esy_target_lmt  = Column(Numeric(8, 2))               # target declarado CCEA (si disponible)
+    sugar_route_pct = Column(Numeric(5, 2))               # % etanol de ruta azúcar vs total
+    data_type       = Column(String(20), default="actual") # 'actual' | 'estimate' | 'formula'
+    source          = Column(String(100))
+    notes           = Column(Text)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("season_year", name="uq_india_ethanol_season"),)
+
+
+class IndiaSugarPrice(Base):
+    """
+    Precio ex-mill azúcar India mensual (₹/quintal).
+    Fuente: ChiniMandi / ISMA.
+    price_date = primer día del mes de referencia.
+    """
+    __tablename__ = "india_sugar_price"
+    id           = Column(Integer, primary_key=True)
+    price_date   = Column(Date, nullable=False)
+    price_rs_qtl = Column(Numeric(8, 2))                  # ₹ per quintal (100 kg)
+    price_rs_kg  = Column(Numeric(8, 4))                  # ₹ per kg
+    season_year  = Column(Integer)                        # temporada molienda (Oct start)
+    source       = Column(String(50), default="chinimandi")
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("price_date", name="uq_india_sugar_price_date"),)
+
+
 class GeeMetric(Base):
     """
     Métricas GEE por POI y fecha — harvest pace, crop stress, SPI.
@@ -419,3 +458,128 @@ class ConabCanaLevantamento(Base):
     created_at      = Column(DateTime, default=datetime.utcnow)
     __table_args__  = (UniqueConstraint("season", "levantamento",
                                         name="uq_conab_season_lev"),)
+
+
+class IsmaRelease(Base):
+    """
+    Datos de producción quincenal publicados por ISMA
+    (Indian Sugar & Bio-energy Manufacturers Association).
+    Temporada Oct-Abr. Cifras NETAS (diversion juice→etanol ya incluida).
+    1 lakh tonne = 0.1 Mt.
+    """
+    __tablename__ = "isma_release"
+    id                    = Column(BigInteger, primary_key=True, autoincrement=True)
+    data_date             = Column(Date, nullable=False)          # "as on" date del dato
+    pub_date              = Column(Date)                          # fecha del press release
+    marketing_year        = Column(Integer, nullable=False)       # año inicio temporada (2025 → 25/26)
+    cumulative_lakh_t     = Column(Numeric(8, 2), nullable=False) # producción acumulada en lakh t
+    cumulative_mt         = Column(Numeric(6, 3), nullable=False) # producción acumulada en Mt (lakh/10)
+    yoy_change_pct        = Column(Numeric(5, 1))                 # variación YoY en %
+    season_progress_pct   = Column(Numeric(5, 1))                 # % de temporada completado
+    estimated_full_year_mt = Column(Numeric(6, 3))               # proyección full-year calculada
+    mills_operating       = Column(Integer)                       # fábricas activas (nullable)
+    maharashtra_lakh_t    = Column(Numeric(7, 2))                 # Maharashtra (nullable)
+    up_lakh_t             = Column(Numeric(7, 2))                 # Uttar Pradesh (nullable)
+    karnataka_lakh_t      = Column(Numeric(7, 2))                 # Karnataka (nullable)
+    source                = Column(String(50), default="manual_cli")  # "manual_cli"|"duckduckgo"|"tribune" etc.
+    notes                 = Column(Text)
+    created_at            = Column(DateTime, default=datetime.utcnow)
+    __table_args__        = (
+        UniqueConstraint("data_date", "marketing_year", name="uq_isma_date_marketing_year"),
+    )
+
+
+class SgtBalanceForecast(Base):
+    """
+    Historial versionado de predicciones del SGT Live Balance Model.
+
+    Cada fila es un snapshot del balance en un momento determinado:
+      - Permite auditoría retrospectiva (¿cuánto nos desviamos del USDA final?)
+      - Alimenta el Weight Drift: si nuestro sgt_prod_mt se aleja del USDA
+        revisado sistemáticamente 3 meses, el engine baja el peso de esa fuente.
+      - confidence_score actúa como Gatekeeper: leverage_cap_pct limita posición.
+
+    marketing_year = año inicio temporada (2025 para 2025/26).
+    scenario       = "base" | "bull" | "bear"
+    """
+    __tablename__     = "sgt_balance_forecast"
+    id                = Column(Integer, primary_key=True)
+    forecast_date     = Column(Date,    nullable=False)
+    marketing_year    = Column(Integer, nullable=False)
+    scenario          = Column(String(10), default="base")
+
+    # Línea base USDA WASDE (punto de partida oficial)
+    usda_prod_mt      = Column(Numeric(8, 2))
+    usda_cons_mt      = Column(Numeric(8, 2))
+    usda_end_mt       = Column(Numeric(8, 2))
+    usda_stu_pct      = Column(Numeric(6, 2))
+
+    # Balance ajustado SGT
+    sgt_prod_mt       = Column(Numeric(8, 2))
+    sgt_cons_mt       = Column(Numeric(8, 2))
+    sgt_end_mt        = Column(Numeric(8, 2))
+    sgt_stu_pct       = Column(Numeric(6, 2))
+    sgt_surplus_mt    = Column(Numeric(8, 2))   # + surplus / - deficit
+
+    # Ajuste Brasil (CONAB override)
+    br_usda_mt        = Column(Numeric(7, 2))
+    br_sgt_mt         = Column(Numeric(7, 2))
+    br_adj_mt         = Column(Numeric(6, 2))   # sgt - usda
+    br_data_source    = Column(String(40))       # "conab_lev3" | "ndvi_gee" | "usda"
+
+    # Ajuste India (NDVI + factor etanol)
+    in_usda_mt        = Column(Numeric(7, 2))
+    in_sgt_mt         = Column(Numeric(7, 2))
+    in_adj_mt         = Column(Numeric(6, 2))
+    in_data_source    = Column(String(40))
+
+    # Ajuste Tailandia (OCSB / NDVI)
+    th_usda_mt        = Column(Numeric(7, 2))
+    th_sgt_mt         = Column(Numeric(7, 2))
+    th_adj_mt         = Column(Numeric(6, 2))
+    th_data_source    = Column(String(40))
+
+    # Confianza & gating de apalancamiento
+    confidence_score  = Column(Numeric(5, 3))   # 0-1
+    leverage_cap_pct  = Column(Numeric(5, 2))   # % de la posición máxima permitida
+
+    # Señal de trading
+    signal            = Column(Integer)          # +1 / 0 / -1
+    bias              = Column(String(20))
+
+    # Metadatos de pesos y fuentes (JSON)
+    data_freshness    = Column(JSON)             # {fuente: días_de_antigüedad}
+    signal_weights    = Column(JSON)             # {fuente: peso_aplicado}
+    weight_drift      = Column(JSON)             # {fuente: drift_3m_coef}
+    notes             = Column(Text)
+
+    created_at        = Column(DateTime, default=datetime.utcnow)
+    __table_args__    = (
+        UniqueConstraint("forecast_date", "marketing_year", "scenario",
+                         name="uq_sgt_balance_forecast"),
+    )
+
+
+class UsdaPsdRecord(Base):
+    """
+    USDA FAS PSD (Production, Supply and Distribution) — balance global azúcar.
+    Un registro por (commodity, país, marketing_year, atributo, mes_publicación).
+    pub_month=0 indica dato de descarga bulk (sin mes de publicación específico).
+    Valores en 1000 MT.
+    """
+    __tablename__    = "usda_psd"
+    id               = Column(Integer, primary_key=True)
+    commodity_code   = Column(String(10), nullable=False)  # "0612000"
+    country_code     = Column(String(5),  nullable=False)  # "WB", "BR", "IN"...
+    country_name     = Column(String(60))
+    marketing_year   = Column(Integer, nullable=False)     # año inicio temporada
+    pub_month        = Column(Integer, nullable=False, default=0)  # 0=bulk, 1-12=WASDE mes
+    attribute_id     = Column(Integer, nullable=False)
+    attribute_name   = Column(String(100))
+    value_1000mt     = Column(Numeric(12, 2))              # miles de MT
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    updated_at       = Column(DateTime)
+    __table_args__   = (
+        UniqueConstraint("commodity_code", "country_code", "marketing_year",
+                         "attribute_id", "pub_month", name="uq_usda_psd"),
+    )

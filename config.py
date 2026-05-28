@@ -36,6 +36,26 @@ BARCHART_DATA_PATH = os.getenv(
 
 DATABENTO_API_KEY  = os.getenv("DATABENTO_API_KEY", "")
 
+# ── USDA FAS PSD API ──────────────────────────────────────────────────────────
+# Clave gratuita en: https://api.data.gov/signup/
+# Sin clave: el script usa descarga bulk Excel como fallback automático.
+USDA_API_KEY       = os.getenv("USDA_API_KEY", "")
+USDA_PSD_BASE_URL  = "https://api.fas.usda.gov/api/psd"
+
+# Azúcar centrífugo crudo No.11 (USDA PSD commodity code)
+USDA_SUGAR_CODE    = "0612000"
+
+# Países clave para balance global
+USDA_COUNTRIES = {
+    "WB": "World",
+    "BR": "Brazil",
+    "IN": "India",
+    "TH": "Thailand",
+    "EU": "European Union",
+    "AU": "Australia",
+    "CN": "China",
+}
+
 CFTC_API_URL       = "https://publicreporting.cftc.gov/resource/j83k-qyrd.json"
 CFTC_SUGAR_MARKET  = "SUGAR NO. 11 - ICE FUTURES U.S."
 
