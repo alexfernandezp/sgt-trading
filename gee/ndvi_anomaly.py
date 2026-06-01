@@ -27,10 +27,11 @@ Architecture Contract compliance:
 """
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import ee
 
@@ -201,8 +202,45 @@ def _history_cache_path(country: str, region: str) -> Path:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# Internal helpers — to be implemented in Step C
+# Internal helpers
 # ════════════════════════════════════════════════════════════════════════════
+
+def _ee_call_with_retry(
+    callable_fn: Callable,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 1.5,
+):
+    """
+    Wrapper de retry con backoff exponencial para llamadas a Earth Engine que
+    pueden fallar de forma transient (429 rate limit, 5xx timeouts bajo carga).
+
+    Usage:
+      result = _ee_call_with_retry(lambda: reduced.getInfo())
+
+    Raises:
+      DataQualityError(field="gee_call"): tras max_retries fallos consecutivos.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries):
+        try:
+            return callable_fn()
+        except ee.EEException as e:
+            last_exc = e
+            if attempt == max_retries - 1:
+                break
+            wait = base_delay * (2 ** attempt)
+            logger.warning(
+                "GEE call failed (attempt %d/%d): %s — retrying in %.1fs",
+                attempt + 1, max_retries, e, wait,
+            )
+            time.sleep(wait)
+    raise DataQualityError(
+        f"GEE call failed after {max_retries} retries",
+        source="gee_ndvi_anomaly", field="gee_call",
+        value=str(last_exc), expected="successful GEE response",
+    )
+
 
 def _build_region_geometry(country: str, region: str) -> "ee.Geometry":
     """
@@ -212,12 +250,37 @@ def _build_region_geometry(country: str, region: str) -> "ee.Geometry":
       KeyError: si region no existe en CONAB_REGIONS
                (mensaje incluye lista de regiones válidas).
     """
-    raise NotImplementedError("Step C — GAUL geometry lookup")
+    if region not in CONAB_REGIONS:
+        valid = sorted(CONAB_REGIONS.keys())
+        raise KeyError(
+            f"region {region!r} not in CONAB_REGIONS. Valid: {valid}"
+        )
+    state_name = CONAB_REGIONS[region]["name"]
+    gaul = ee.FeatureCollection("FAO/GAUL/2015/level1")
+    feature = gaul.filter(
+        ee.Filter.And(
+            ee.Filter.eq("ADM0_NAME", "Brazil"),
+            ee.Filter.eq("ADM1_NAME", state_name),
+        )
+    ).first()
+    return feature.geometry()
 
 
 def _add_ndvi_band(image: "ee.Image") -> "ee.Image":
-    """Añade banda NDVI a imagen S2 + máscara nubes (SCL band)."""
-    raise NotImplementedError("Step C — S2 NDVI + cloud mask")
+    """
+    Añade banda NDVI a imagen S2 + máscara nubes vía SCL.
+
+    NDVI = (B8 - B4) / (B8 + B4), donde B8=NIR, B4=Red.
+
+    SCL band classes (Sentinel-2 L2A):
+      0=no_data, 1=saturated, 2=dark, 3=cloud_shadow, 4=veg, 5=bare, 6=water,
+      7=unclassified, 8=cloud_medium, 9=cloud_high, 10=cirrus, 11=snow_ice
+    Mask out (invalid for NDVI computation): {0, 1, 3, 8, 9, 10, 11}.
+    """
+    ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
+    scl = image.select("SCL")
+    bad = scl.eq(0).Or(scl.eq(1)).Or(scl.eq(3)).Or(scl.gte(8))
+    return image.addBands(ndvi).updateMask(bad.Not())
 
 
 def _month_climatology_ee(geometry: "ee.Geometry", month: int,
@@ -227,12 +290,31 @@ def _month_climatology_ee(geometry: "ee.Geometry", month: int,
       mediana de todos los píxeles NDVI para el mes calendario `month`
       a lo largo del rango [year_start, year_end].
     """
-    raise NotImplementedError("Step C — calendar-aware climatology")
+    coll = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(geometry)
+        .filterDate(f"{year_start}-01-01", f"{year_end}-12-31")
+        .filter(ee.Filter.calendarRange(month, month, "month"))
+        .map(_add_ndvi_band)
+        .select("NDVI")
+    )
+    return coll.median()
 
 
 def _current_month_ndvi_ee(geometry: "ee.Geometry", year: int, month: int) -> "ee.Image":
     """NDVI medio del mes calendario para year-month."""
-    raise NotImplementedError("Step C — current month NDVI")
+    if month == 12:
+        next_year, next_month = year + 1, 1
+    else:
+        next_year, next_month = year, month + 1
+    coll = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterBounds(geometry)
+        .filterDate(f"{year}-{month:02d}-01", f"{next_year}-{next_month:02d}-01")
+        .map(_add_ndvi_band)
+        .select("NDVI")
+    )
+    return coll.median()
 
 
 def _reduce_to_region_mean(image: "ee.Image", geometry: "ee.Geometry",
@@ -240,10 +322,48 @@ def _reduce_to_region_mean(image: "ee.Image", geometry: "ee.Geometry",
     """
     Server-side reduceRegion para extraer mean NDVI + coverage metrics.
 
+    Coverage = valid_pixel_count / total_pixel_count.
+    valid_pixel_count viene del count del band ya mascarado por _add_ndvi_band.
+    total_pixel_count viene de count sobre ee.Image.constant(1) en la misma geometry.
+
     Returns dict con keys:
       mean, pixel_count, valid_pixel_count, pixel_coverage_pct.
+
+    Raises:
+      DataQualityError(field="gee_call"): si Earth Engine falla tras retries.
     """
-    raise NotImplementedError("Step C — server-side reduceRegion")
+    # Reduce 1: mean + count del band ya mascarado (píxeles válidos)
+    reduced_dict = image.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.count(), sharedInputs=True),
+        geometry=geometry,
+        scale=100,
+        maxPixels=int(1e10),
+        bestEffort=True,
+    )
+    reduced = _ee_call_with_retry(lambda: reduced_dict.getInfo())
+
+    # Reduce 2: total de píxeles en la geometry (Image.constant unmasked)
+    total_dict = ee.Image.constant(1).reduceRegion(
+        reducer=ee.Reducer.count(),
+        geometry=geometry,
+        scale=100,
+        maxPixels=int(1e10),
+        bestEffort=True,
+    )
+    total_info = _ee_call_with_retry(lambda: total_dict.getInfo())
+
+    mean_value   = reduced.get(f"{band}_mean") if isinstance(reduced, dict) else None
+    valid_pixels = reduced.get(f"{band}_count", 0) if isinstance(reduced, dict) else 0
+    total_pixels = total_info.get("constant", 0) if isinstance(total_info, dict) else 0
+
+    coverage_pct = (valid_pixels / total_pixels) if total_pixels > 0 else 0.0
+
+    return {
+        "mean": mean_value,
+        "valid_pixel_count": int(valid_pixels),
+        "pixel_count": int(total_pixels),
+        "pixel_coverage_pct": coverage_pct,
+    }
 
 
 def _validate_coverage_gate(coverage_pct: float, *,
