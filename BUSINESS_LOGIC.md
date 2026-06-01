@@ -369,6 +369,39 @@ WARNING  gee.ndvi_anomaly | -> Market DIVERGENCE_BEARISH | CONAB=RECOVERY, satel
 `CONFIRMATION` se loguea a **INFO** (evento esperado, ruido bajo). `DIVERGENCE_*` se loguea
 a **WARNING** (señal alpha, debe llegar a sistemas de alertas).
 
+#### 7.5.8 Robustez de Inferencia CONAB
+
+Decisión 2026-06-01: `_infer_conab_direction()` **NO lanza excepción** cuando no puede
+deducir la dirección. En su lugar retorna `("STABLE", inferred=True)` con `logger.warning`.
+
+**Razón:** una falla en la inferencia CONAB (DB inaccesible, levantamentos insuficientes,
+datos stale > 130 días, columnas null) no debe romper el benchmark entero. STABLE produce
+`market_signal = NEUTRAL` que es la **degradación elegante** apropiada: el sistema reconoce
+que no tiene base para una señal direccional pero sigue calculando el anomaly NDVI
+observable.
+
+**Casos que disparan fallback STABLE** (todos loguean WARNING con contexto):
+
+  - Tabla `conab_cana_levantamento` inaccesible (ImportError o SQLAlchemyError)
+  - Menos de 2 levantamentos disponibles
+  - `report_date` del último levantamento es NULL
+  - Último levantamento > 130 días (BUSINESS_LOGIC §4 freshness max_age_days)
+  - `sugar_total_mt` NULL en alguno de los 2 últimos registros
+  - `previous_sugar == 0` (división por cero)
+
+**Threshold delta:** `±3%` separa RECOVERY/DETERIORATION de STABLE. Valor elegido como
+compromise entre:
+  - Más sensible (±1%): captura más señales pero muchas son ruido de revisión menor entre
+    levantamentos del mismo año (típico ±1-2%)
+  - Más estricto (±5%): pierde divergencias reales en años de stress moderado
+
+Revisable tras shadow test Step F.
+
+**Implicación para la matriz §7.5.5:** Cuando `direction = STABLE`, todos los outputs son
+NEUTRAL (fila correspondiente en la matriz). Por tanto, un fallback a STABLE no genera
+señal de trading espuria — la peor consecuencia es perder oportunidades, no generar
+falsas alarmas.
+
 ---
 
 ## 8. Lo que NO está en este documento (aún)

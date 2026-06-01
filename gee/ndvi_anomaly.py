@@ -543,8 +543,37 @@ def _compute_baseline(country: str, region: str, month: int) -> dict:
     Orquesta cache lookup → cómputo GEE (si miss) → save cache.
 
     Returns dict con baseline_ndvi + historical_coverage_pct + metadata.
+
+    Nota sobre historical_coverage_pct (BUSINESS_LOGIC §7.5.3): se usa el % de
+    píxeles válidos en la imagen baseline (mediana 5yr) como proxy del "% de
+    meses históricos con cobertura suficiente". Justificación: si el median
+    5yr tiene alta cobertura de píxeles, la mayoría de los meses fuente
+    aportaron datos. Trade-off: más rápido (1 reduce vs 5), aceptable para
+    Fase 1; refinable post shadow test (Step F) si se observan divergencias.
     """
-    raise NotImplementedError("Step C — baseline orchestration")
+    current_year = datetime.now().year
+    year_start = current_year - BASELINE_YEARS_WINDOW
+    year_end   = current_year - 1
+    path = _baseline_cache_path(country, region, month, year_start, year_end)
+    cached = _load_cache(path, BASELINE_TTL_DAYS)
+    if cached is not None:
+        return cached
+    geometry = _build_region_geometry(country, region)
+    climatology_img = _month_climatology_ee(geometry, month, year_start, year_end)
+    metrics = _reduce_to_region_mean(climatology_img, geometry, "NDVI")
+    result = {
+        "country": country,
+        "region": region,
+        "month": month,
+        "baseline_start_year": year_start,
+        "baseline_end_year": year_end,
+        "baseline_ndvi": metrics["mean"],
+        "historical_coverage_pct": metrics["pixel_coverage_pct"],
+        "valid_pixel_count": metrics["valid_pixel_count"],
+        "pixel_count": metrics["pixel_count"],
+    }
+    _save_cache(path, result)
+    return result
 
 
 def _compute_current(country: str, region: str, year: int, month: int) -> dict:
@@ -553,23 +582,108 @@ def _compute_current(country: str, region: str, year: int, month: int) -> dict:
 
     Returns dict con current_ndvi + pixel_coverage_pct + metadata.
     """
-    raise NotImplementedError("Step C — current month orchestration")
+    path = _current_cache_path(country, region, year, month)
+    cached = _load_cache(path, CURRENT_TTL_DAYS)
+    if cached is not None:
+        return cached
+    geometry = _build_region_geometry(country, region)
+    current_img = _current_month_ndvi_ee(geometry, year, month)
+    metrics = _reduce_to_region_mean(current_img, geometry, "NDVI")
+    result = {
+        "country": country,
+        "region": region,
+        "year": year,
+        "month": month,
+        "current_ndvi": metrics["mean"],
+        "pixel_coverage_pct": metrics["pixel_coverage_pct"],
+        "valid_pixel_count": metrics["valid_pixel_count"],
+        "pixel_count": metrics["pixel_count"],
+    }
+    _save_cache(path, result)
+    return result
 
 
 def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
     """
-    Lee los 2 últimos levantamentos de conab_cana_levantamento para esta región
-    y deduce dirección (RECOVERY/DETERIORATION/STABLE) por delta de producción
-    o área.
+    Lee los 2 últimos levantamentos de conab_cana_levantamento y deduce dirección
+    (RECOVERY/DETERIORATION/STABLE) por delta de producción.
 
-    Returns: (direction, inferred=True).
+    Robustez por defecto (BUSINESS_LOGIC §7.5.8):
+      No lanza excepción. Si no hay datos suficientes, datos stale, o falla DB,
+      retorna ("STABLE", True) loguendo WARNING. La política de robustness sobre
+      "raise" se eligió 2026-06-01 para evitar que el benchmark se rompa entero
+      cuando solo falta data — STABLE produce market_signal=NEUTRAL, que es la
+      degradación elegante apropiada.
 
-    Raises:
-      DataQualityError(field="conab_inference"):
-        - Si hay menos de 2 levantamentos disponibles para la región
-        - Si el último levantamento es demasiado antiguo (>130 días — ver §4 freshness)
+    Threshold delta: ±3% para evitar ruido de revisiones menores. El umbral está
+    documentado en BUSINESS_LOGIC §7.5.8 y es revisable tras shadow test.
+
+    Returns:
+      (direction, inferred=True) donde direction ∈ VALID_CONAB_DIRECTIONS.
     """
-    raise NotImplementedError("Step C — CONAB direction inference from DB")
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        from sqlalchemy.exc import SQLAlchemyError
+    except ImportError as e:
+        logger.warning(
+            "CONAB inference imports failed (%s) — fallback STABLE for %s",
+            e, region,
+        )
+        return "STABLE", True
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(text("""
+                SELECT harvest_year, forecast_round, sugar_total_mt, report_date
+                FROM conab_cana_levantamento
+                ORDER BY report_date DESC NULLS LAST
+                LIMIT 2
+            """)).fetchall()
+    except SQLAlchemyError as e:
+        logger.warning(
+            "CONAB inference DB error (fallback STABLE for %s): %s", region, e,
+        )
+        return "STABLE", True
+    if len(rows) < 2:
+        logger.warning(
+            "CONAB inference: only %d levantamento(s) — fallback STABLE for %s",
+            len(rows), region,
+        )
+        return "STABLE", True
+    latest, previous = rows[0], rows[1]
+    latest_date = latest[3]
+    if latest_date is None:
+        logger.warning(
+            "CONAB latest has no report_date — fallback STABLE for %s", region,
+        )
+        return "STABLE", True
+    from datetime import date as _date
+    days_old = (_date.today() - latest_date).days
+    if days_old > 130:
+        logger.warning(
+            "CONAB stale (%dd > 130d) — fallback STABLE for %s",
+            days_old, region,
+        )
+        return "STABLE", True
+    latest_sugar   = float(latest[2])   if latest[2]   is not None else None
+    previous_sugar = float(previous[2]) if previous[2] is not None else None
+    if latest_sugar is None or previous_sugar is None or previous_sugar == 0:
+        logger.warning(
+            "CONAB missing/zero sugar_total_mt — fallback STABLE for %s", region,
+        )
+        return "STABLE", True
+    delta_pct = (latest_sugar - previous_sugar) / previous_sugar * 100
+    if delta_pct >= 3.0:
+        direction = "RECOVERY"
+    elif delta_pct <= -3.0:
+        direction = "DETERIORATION"
+    else:
+        direction = "STABLE"
+    logger.info(
+        "CONAB inference for %s: latest=%.2fMt prev=%.2fMt delta=%+.2f%% -> %s",
+        region, latest_sugar, previous_sugar, delta_pct, direction,
+    )
+    return direction, True
 
 
 def _classify_market_signal(percentile: Optional[float],
@@ -583,7 +697,21 @@ def _classify_market_signal(percentile: Optional[float],
       P >= 70 AND direction = DETERIORATION   → DIVERGENCE_BULLISH
       otherwise (incluye STABLE o percentile=None) → NEUTRAL
     """
-    raise NotImplementedError("Step D — market signal classification")
+    if percentile is None:
+        return "NEUTRAL"
+    if conab_direction not in VALID_CONAB_DIRECTIONS or conab_direction == "STABLE":
+        return "NEUTRAL"
+    if percentile >= PERCENTILE_HIGH:
+        if conab_direction == "RECOVERY":
+            return "CONFIRMATION"
+        if conab_direction == "DETERIORATION":
+            return "DIVERGENCE_BULLISH"
+    if percentile <= PERCENTILE_LOW:
+        if conab_direction == "DETERIORATION":
+            return "CONFIRMATION"
+        if conab_direction == "RECOVERY":
+            return "DIVERGENCE_BEARISH"
+    return "NEUTRAL"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -666,7 +794,10 @@ def benchmark_vs_conab_report(
 
     Raises:
       ValueError                                : conab_direction inválido (no en VALID_CONAB_DIRECTIONS)
-      DataQualityError(field="conab_inference") : direction=None y no se pudo inferir
       Todas las excepciones de compute_ndvi_anomaly (propagan transparentemente)
+
+    Nota: _infer_conab_direction NO lanza excepción cuando no puede inferir;
+    retorna ("STABLE", True) con WARNING log. Esto produce market_signal=NEUTRAL
+    como degradación elegante. Ver BUSINESS_LOGIC §7.5.8.
     """
     raise NotImplementedError("Step D — benchmark_vs_conab_report wrapper")
