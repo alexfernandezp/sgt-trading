@@ -131,17 +131,25 @@ def _cot_regime(rows_full):
 
 def _score_a1(session, direction):
     """
-    COT Level — deteccion de regimen.
-    Bullish contrarian solo cuando posicion es EXTREMO REAL y esta invirtiendo.
-    Bearish trend-following cuando specs estan construyendo posicion bajista.
+    COT Extreme Percentile Model — managed money net (disaggregated).
+    Percentil 3 años: >90th = EXTREME_LONG → SHORT; <10th = EXTREME_SHORT → LONG.
+    Upgrade sobre spec_net legacy: mm_net captura hedge funds/CTAs puros.
+    Mantiene _cot_regime como contexto adicional en el dict de salida.
     """
-    rows = session.execute(text(
+    from services.cot_percentile import score_cot_percentile
+    score, ctx = score_cot_percentile(session, direction)
+
+    # Contexto adicional: régimen legacy (spec_net) para audit trail
+    rows_legacy = session.execute(text(
         "SELECT speculator_net FROM cot_data ORDER BY report_date DESC"
     )).fetchall()
-    if len(rows) < 4:
-        return None, {}
-    regime, sig_l, sig_s, ctx = _cot_regime(rows)
-    score = sig_l if direction == "LONG" else sig_s
+    if len(rows_legacy) >= 4:
+        _, _, _, legacy_ctx = _cot_regime(rows_legacy)
+        # Añadir campos legacy sin sobreescribir los nuevos
+        for k, v in legacy_ctx.items():
+            if k not in ctx:
+                ctx[f"legacy_{k}"] = v
+
     return score, ctx
 
 
@@ -186,19 +194,14 @@ def _score_a3(session, direction):
 
 
 def _score_b1(session, direction):
-    row = session.execute(text("""
-        SELECT MAX(CASE WHEN instrument='SBN26' THEN close END),
-               MAX(CASE WHEN instrument='SBV26' THEN close END)
-        FROM price_history
-        WHERE instrument IN ('SBN26','SBV26')
-          AND date = (SELECT MAX(date) FROM price_history WHERE instrument='SBN26')
-    """)).fetchone()
-    if not row or row[0] is None or row[1] is None:
-        return None, {}
-    sbn, sbv = float(row[0]), float(row[1])
-    spread   = round(sbn - sbv, 4)
-    score    = _score(spread > 0) if direction == "LONG" else _score(spread < 0)
-    return score, {"sbn26": sbn, "sbv26": sbv, "spread_sbn_sbv": spread}
+    """
+    Term Structure completa ICE No.11 — calendario de vencimientos vs full carry.
+    BACKWARDATION → LONG (escasez física).
+    SUPER_CONTANGO / FULL_CARRY_CONTANGO → SHORT (exceso oferta).
+    WEAK_CONTANGO → LONG (tensión latente, spread < carry esperado).
+    """
+    from services.spread_signal import score_spread
+    return score_spread(session, direction)
 
 
 def _score_b2(session, direction):
@@ -413,6 +416,18 @@ def compute_auto_scores(session: Session, direction: str, instrument: str = "SBN
     run("b3_vwap",          _score_b3, session, direction, instrument)
     run("c2_open_volume",   _score_c2, session, direction)
     run("d3_drawdown",      _score_d3, session)
+
+    # White premium — señal informativa (no criterio binario, no altera umbrales)
+    try:
+        from services.white_premium import compute_white_premium
+        wp_ctx = compute_white_premium(session)
+        inputs.update({k: v for k, v in wp_ctx.items()
+                       if k not in ("signal_long", "signal_short")})
+        # Exponer señal WP como campo auxiliar en inputs para signal_logger
+        inputs["wp_signal_long"]  = wp_ctx.get("signal_long", 0)
+        inputs["wp_signal_short"] = wp_ctx.get("signal_short", 0)
+    except Exception as exc:
+        logger.debug("white_premium: %s", exc)
 
     for manual in ("c1_key_level", "c3_options", "d1_event_risk", "d2_liquidity"):
         scores[manual] = None

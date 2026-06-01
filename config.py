@@ -21,9 +21,15 @@ TICK_SIZE           = 0.01
 TICK_VALUE          = CONTRACT_SIZE_LBS * TICK_SIZE / 100      # $11.20
 
 INSTRUMENTS = {
+    # ICE No.11 — curva completa (H, K, N, V son los únicos vencimientos listados)
     "SBN26":      {"yf_ticker": "SBN26.NYB", "fallback": None,   "description": "Sugar No.11 Jul 2026"},
     "SBV26":      {"yf_ticker": "SBV26.NYB", "fallback": None,   "description": "Sugar No.11 Oct 2026"},
+    "SBH27":      {"yf_ticker": "SBH27.NYB", "fallback": None,   "description": "Sugar No.11 Mar 2027"},
+    "SBK27":      {"yf_ticker": "SBK27.NYB", "fallback": None,   "description": "Sugar No.11 May 2027"},
+    "SBN27":      {"yf_ticker": "SBN27.NYB", "fallback": None,   "description": "Sugar No.11 Jul 2027"},
+    "SBV27":      {"yf_ticker": "SBV27.NYB", "fallback": None,   "description": "Sugar No.11 Oct 2027"},
     "SB_CONT":    {"yf_ticker": "SB=F",      "fallback": None,   "description": "Sugar No.11 continuo"},
+    # Macro
     "BRENT":      {"yf_ticker": "BZ=F",      "fallback": "CL=F", "description": "Brent Crude Oil"},
     "BRLUSD":     {"yf_ticker": "BRL=X",     "fallback": None,   "description": "Brazilian Real / USD"},
 }

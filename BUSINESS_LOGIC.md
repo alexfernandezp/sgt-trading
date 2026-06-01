@@ -76,7 +76,55 @@ suficiente para rechazar errores obvios (precios negativos, NDVI = 1.8).
 | `hydrous_fuel_usd_liter` | `[0.05, 2.0]` US$/L | Coherente con m³ |
 | `anhydrous_usd_liter` | `[0.05, 2.5]` US$/L | Anhídrico premium sobre hidratado |
 | `crystal_sugar_usd_bag50kg` | `[1.0, 100.0]` US$/bolsa | Histórico: $10-35 |
+| `crystal_sugar2_usd_bag50kg` (likely VHP) | `[1.0, 100.0]` US$/bolsa | Nueva serie CEPEA desde 2026-05-04; ~+12% sobre crystal_sugar (raw/VHP grade) |
 | **`pct_daily/weekly/monthly`** | `[-50.0, 50.0]` % | Cambio % razonable |
+
+#### 3.3.1 Date Format Disambiguation — Anti-Future-Date Guard
+
+CEPEA `/en/indicator/` documenta formato `MM/DD/YYYY`. Sin embargo, **el sitio
+publica eventualmente filas semanales en `DD/MM/YYYY`** (probablemente por
+cambios HTML del backend brasileño que se filtran a la versión en inglés).
+El parser legacy elegía siempre MM/DD → silenciosamente insertaba dates
+futuras espurias.
+
+**Incidente documentado 2026-05-25 → 2026-06-01:**
+3 filas contaminadas detectadas en `hydrous_other_usd_liter` (run del 2026-05-25
+09:59:54). Análisis forense confirmó precios byte-idénticos a swap-targets ya
+presentes en DB (re-parse del mismo dato CEPEA con interpretación diferente).
+DELETE quirúrgico vía `scripts/cleanup_cepea_future_corruptions.py` con SRE
+two-key protocol. Commits: `62f1cf6` (parser fix), `90ce505` (cleanup).
+
+**Regla defensiva en `cepea.py:_parse_date()`:**
+
+1. Intentar `%m/%d/%Y` PRIMERO (preserva comportamiento histórico: dates ya
+   guardadas con MM/DD siguen parseando idénticas — backward compat sin
+   re-parsing de 13k filas).
+
+2. Si la fecha resultante es `> today + 7d` → suspicious → retry con `%d/%m/%Y`.
+
+3. Si DD/MM también es futura, inválida, o `> today + 7d` → return `None` +
+   `logger.warning` con audit trail (raw string + interpretación rechazada).
+
+4. Si MM/DD es inválida (ej. mes > 12) → fall through a DD/MM (legacy behavior
+   ya existente).
+
+**¿Por qué +7d como threshold, no estrictamente `> today`?**
+
+Tolerancia operativa. CEPEA en ocasiones publica una fila con la fecha del
+próximo día hábil (pre-publicación legítima en mercados cuyo cierre BRT cruza
+medianoche UTC). Un guard estrictamente `> today` rechazaría datos válidos.
+El compromiso +7d:
+  - Permite pre-publicación legítima de hasta 1 semana
+  - Bloquea contaminación grave (3+ meses de futuro)
+  - Cleanup forense acota daño cuando el bug escapa el buffer (caso real:
+    detectado por escaneo estricto `> today` a posteriori del run buggy)
+
+**Backward compatibility garantizada:**
+
+Para dates **ambiguas y pasadas** (ej. `03/04/2026` válido como Mar 4 y Apr 3),
+el parser SIEMPRE prefiere MM/DD (legacy). Solo cambia comportamiento cuando
+MM/DD produce una fecha futura. Esto evita divergencia silenciosa con dates
+históricas ya guardadas correctamente.
 
 ### 3.4 COT (CFTC posicionamiento)
 
