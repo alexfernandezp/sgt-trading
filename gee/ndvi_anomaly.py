@@ -72,6 +72,15 @@ BASELINE_YEARS_WINDOW = 5                  # 5-year climatology
 ANOMALY_VALID_RANGE   = (-0.5, 0.5)        # range cap for anomaly value
 NDVI_VALID_RANGE      = (-1.0, 1.0)        # physical definition
 
+# reduceRegion config para reducciones a nivel estado (BUSINESS_LOGIC §7.5.4):
+#   scale=250m: estándar MODIS para NDVI estatal. SP=~248k km² @100m son 25M
+#     pixels (excede GEE memory); @250m son ~4M (cómodo). Granularidad apta para
+#     agregación estado (campos típicos caña: 50-500 ha = 500m-2km).
+#   tileScale=4: divide reducción en sub-tiles → memory headroom server-side.
+REDUCE_SCALE_METERS = 250
+REDUCE_TILE_SCALE   = 4
+REDUCE_MAX_PIXELS   = int(1e10)
+
 # Number of historical anomalies in rolling window used by robust_stats.
 # 24 months covers 2 full seasons + buffer for early-stage signal stability.
 HISTORY_WINDOW_MONTHS = 24
@@ -89,15 +98,20 @@ VALID_CONAB_DIRECTIONS = ("RECOVERY", "DETERIORATION", "STABLE")
 # ════════════════════════════════════════════════════════════════════════════
 # CONAB region mapping — Brazil sugarcane states via FAO/GAUL/2015/level1
 #
-# gaul_admin1_id values to be resolved during Step C (requires GEE auth context).
-# Region IDs follow ISO-style: BR_<state_postal_code>.
+# Convención GAUL verificada 2026-06-01 (inspección scripts/_inspect_gaul_brazil.py):
+#   - ADM0_NAME = "Brazil" (literal, no "Brasil")
+#   - ADM1_NAME = sin acentos + Title Case completo (ej. "Mato Grosso Do Sul" con
+#     'Do' capitalizado, no 'do'; "Sao Paulo" sin tilde; "Goias" sin tilde)
+#
+# `display_name` es la forma legible humana para logs/UI; `gaul_name` es el
+# string EXACTO con el que GAUL guarda el estado (case + accents sensitive).
 # ════════════════════════════════════════════════════════════════════════════
 CONAB_REGIONS: dict[str, dict] = {
-    "BR_SP": {"name": "São Paulo",          "gaul_admin1_id": None},
-    "BR_GO": {"name": "Goiás",              "gaul_admin1_id": None},
-    "BR_MG": {"name": "Minas Gerais",       "gaul_admin1_id": None},
-    "BR_MS": {"name": "Mato Grosso do Sul", "gaul_admin1_id": None},
-    "BR_PR": {"name": "Paraná",             "gaul_admin1_id": None},
+    "BR_SP": {"display_name": "São Paulo",          "gaul_name": "Sao Paulo"},
+    "BR_GO": {"display_name": "Goiás",              "gaul_name": "Goias"},
+    "BR_MG": {"display_name": "Minas Gerais",       "gaul_name": "Minas Gerais"},
+    "BR_MS": {"display_name": "Mato Grosso do Sul", "gaul_name": "Mato Grosso Do Sul"},
+    "BR_PR": {"display_name": "Paraná",             "gaul_name": "Parana"},
 }
 
 
@@ -273,12 +287,12 @@ def _build_region_geometry(country: str, region: str) -> "ee.Geometry":
         raise KeyError(
             f"region {region!r} not in CONAB_REGIONS. Valid: {valid}"
         )
-    state_name = CONAB_REGIONS[region]["name"]
+    gaul_name = CONAB_REGIONS[region]["gaul_name"]
     gaul = ee.FeatureCollection("FAO/GAUL/2015/level1")
     feature = gaul.filter(
         ee.Filter.And(
             ee.Filter.eq("ADM0_NAME", "Brazil"),
-            ee.Filter.eq("ADM1_NAME", state_name),
+            ee.Filter.eq("ADM1_NAME", gaul_name),
         )
     ).first()
     return feature.geometry()
@@ -354,9 +368,10 @@ def _reduce_to_region_mean(image: "ee.Image", geometry: "ee.Geometry",
     reduced_dict = image.reduceRegion(
         reducer=ee.Reducer.mean().combine(ee.Reducer.count(), sharedInputs=True),
         geometry=geometry,
-        scale=100,
-        maxPixels=int(1e10),
+        scale=REDUCE_SCALE_METERS,
+        maxPixels=REDUCE_MAX_PIXELS,
         bestEffort=True,
+        tileScale=REDUCE_TILE_SCALE,
     )
     reduced = _ee_call_with_retry(lambda: reduced_dict.getInfo())
 
@@ -364,9 +379,10 @@ def _reduce_to_region_mean(image: "ee.Image", geometry: "ee.Geometry",
     total_dict = ee.Image.constant(1).reduceRegion(
         reducer=ee.Reducer.count(),
         geometry=geometry,
-        scale=100,
-        maxPixels=int(1e10),
+        scale=REDUCE_SCALE_METERS,
+        maxPixels=REDUCE_MAX_PIXELS,
         bestEffort=True,
+        tileScale=REDUCE_TILE_SCALE,
     )
     total_info = _ee_call_with_retry(lambda: total_dict.getInfo())
 
@@ -374,7 +390,17 @@ def _reduce_to_region_mean(image: "ee.Image", geometry: "ee.Geometry",
     valid_pixels = reduced.get(f"{band}_count", 0) if isinstance(reduced, dict) else 0
     total_pixels = total_info.get("constant", 0) if isinstance(total_info, dict) else 0
 
-    coverage_pct = (valid_pixels / total_pixels) if total_pixels > 0 else 0.0
+    raw_coverage = (valid_pixels / total_pixels) if total_pixels > 0 else 0.0
+    # Clamp [0, 1]: dos reducciones independientes (NDVI image vs constant) pueden
+    # diferir ligeramente por proyección/grid alignment con bestEffort=True. La
+    # discrepancia típica es <1% y semánticamente "cobertura completa" — clampear
+    # es correcto. Log DEBUG si excede para detectar drift estructural mayor.
+    coverage_pct = max(0.0, min(1.0, raw_coverage))
+    if raw_coverage > 1.005:
+        logger.debug(
+            "coverage clamp: raw=%.4f -> 1.0 (projection grid mismatch valid=%d total=%d)",
+            raw_coverage, valid_pixels, total_pixels,
+        )
 
     return {
         "mean": mean_value,

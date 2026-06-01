@@ -316,6 +316,18 @@ coincida con el nuevo path → recomputo forzado sin migración explícita.
 idempotente. Atomic write (`.tmp` → `rename`) garantiza que un crash mid-write no corrompe
 el archivo de history.
 
+**Server-side reduce config** (`_reduce_to_region_mean`):
+  - `scale=250m` (`REDUCE_SCALE_METERS`): estándar MODIS para NDVI estatal. São Paulo
+    @100m son ~25M píxeles → GEE "User memory limit exceeded". @250m son ~4M (cómodo).
+    Granularidad apropiada para agregación estado: campos típicos de caña 50-500 ha =
+    500m-2km, mucho mayor que 250m.
+  - `tileScale=4` (`REDUCE_TILE_SCALE`): divide la reducción en sub-tiles server-side
+    para más memory headroom. Compatible con `bestEffort=True`.
+  - **Clamp coverage a [0, 1]**: las dos reducciones independientes (NDVI count vs
+    `Image.constant(1)` count) pueden diferir <1% por grid/projection alignment con
+    `bestEffort=True`. La discrepancia se clampea y se loguea `DEBUG` solo si excede
+    1.005 (detección de drift estructural mayor).
+
 **Rolling history window:** `_load_anomaly_history` retorna las últimas
 `HISTORY_WINDOW_MONTHS = 24` observaciones (no all-time). 24 meses cubren 2 zafras
 brasileñas completas (Abril-Marzo), suficiente para que `robust_stats` produzca percentile
