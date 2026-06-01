@@ -166,9 +166,10 @@ def check_or_log(
 ) -> tuple[Any, bool]:
     """
     Ejecuta validator(). Si lanza DataQualityError:
-      on_error="raise" : propaga la excepción
-      on_error="warn"  : logger.error con contexto, retorna (None, False)
-      on_error="silent": retorna (None, False) sin log
+      on_error="raise"  : propaga la excepción (caller decide)
+      on_error="warn"   : logger.WARNING (row-level skip semantics §5), retorna (None, False)
+      on_error="error"  : logger.ERROR (source-level failure semantics §5), retorna (None, False)
+      on_error="silent" : retorna (None, False) sin log
 
     Returns: (resultado_validator, is_valid). Permite degradación elegante row-level
     sin contaminar el caller con try/except.
@@ -187,11 +188,15 @@ def check_or_log(
     except DataQualityError as e:
         if on_error == "raise":
             raise
+        msg_args = (
+            "DataQualityError | source=%s field=%s value=%r expected=%r",
+            e.source, e.field, e.value, e.expected,
+        )
         if on_error == "warn":
-            logger.error(
-                "DataQualityError | source=%s field=%s value=%r expected=%r",
-                e.source, e.field, e.value, e.expected,
-            )
+            logger.warning(*msg_args)
+        elif on_error == "error":
+            logger.error(*msg_args)
+        # on_error == "silent" → no log
         return None, False
 
 

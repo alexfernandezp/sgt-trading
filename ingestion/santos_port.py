@@ -36,7 +36,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import SantosPortSnapshot
-from services.data_quality import parse_log_warning
+from services.data_quality import check_or_log, parse_log_warning, validate_range
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -71,6 +71,33 @@ def _get_html(url: str, retries: int = 3) -> Optional[str]:
 def _cells(tr) -> list[str]:
     """Extrae texto limpio de todos los <td> de un <tr>."""
     return [td.get_text(separator=" ", strip=True) for td in tr.find_all("td")]
+
+
+def _validate_santos_tonnage(load_qty_t, weight_t, ship_name: str) -> bool:
+    """
+    Valida load_qty_t y weight_t contra rango §3.6 [0, 200_000] toneladas.
+
+    Permite None (legítimo: muchos barcos no traen ambos campos). Solo
+    rechaza valores explícitos fuera de rango. Returns False + WARNING si
+    alguno se sale; True si ambos son válidos o None.
+    """
+    _, load_ok = check_or_log(
+        lambda: validate_range(
+            load_qty_t, min_value=0, max_value=200_000,
+            source="santos_port", field=f"load_qty_t[{ship_name}]",
+            allow_none=True,
+        ),
+        on_error="warn",
+    )
+    _, weight_ok = check_or_log(
+        lambda: validate_range(
+            weight_t, min_value=0, max_value=200_000,
+            source="santos_port", field=f"weight_t[{ship_name}]",
+            allow_none=True,
+        ),
+        on_error="warn",
+    )
+    return load_ok and weight_ok
 
 
 def _parse_int(s: str) -> Optional[int]:
@@ -187,6 +214,11 @@ def _parse_scheduled(html: str) -> list[dict]:
 
 def _upsert_ships(session: Session, page: str, ships: list[dict], today: date):
     for s in ships:
+        # Range Gate §3.6 — descarta barcos con tonelajes corruptos
+        if not _validate_santos_tonnage(
+            s.get("load_qty_t"), s.get("weight_t"), s.get("ship", "?")
+        ):
+            continue
         record = {
             "snapshot_date": today,
             "page":          page,

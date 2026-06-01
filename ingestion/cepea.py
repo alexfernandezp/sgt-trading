@@ -28,7 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import CepeaPrice
-from services.data_quality import parse_log_warning
+from services.data_quality import check_or_log, parse_log_warning, validate_range
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -77,6 +77,46 @@ def _get_html(url: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Parsers
 # ---------------------------------------------------------------------------
+
+def _get_price_range(series_name: str) -> tuple[float, float]:
+    """
+    Returns (min_usd, max_usd) válido para esta serie CEPEA (BUSINESS_LOGIC §3.3).
+
+    Heurística por substring del series_name:
+      'bag50kg' (sugar)            -> [1.0, 100.0] US$/bolsa
+      '_m3' (etanol volumen)       -> [50.0, 2000.0] US$/m³
+      'anhydrous_..._liter'        -> [0.05, 2.5] US$/L (premium anhídrico)
+      '_liter' (otros etanol)      -> [0.05, 2.0] US$/L
+      default                      -> [0.001, 10000.0] (last-resort permissive)
+    """
+    n = series_name.lower()
+    if "bag50kg" in n or "sugar" in n:
+        return (1.0, 100.0)
+    if "_m3" in n:
+        return (50.0, 2000.0)
+    if "anhydrous" in n and "liter" in n:
+        return (0.05, 2.5)
+    if "liter" in n:
+        return (0.05, 2.0)
+    return (0.001, 10000.0)
+
+
+def _validate_cepea_price(price_usd: float, series_name: str) -> bool:
+    """
+    Valida price_usd contra el rango §3.3 para esta serie. Returns True si
+    el precio es accionable; False + WARNING si fuera de rango (la fila se
+    descarta downstream, no llega al upsert).
+    """
+    pmin, pmax = _get_price_range(series_name)
+    _, ok = check_or_log(
+        lambda: validate_range(
+            price_usd, min_value=pmin, max_value=pmax,
+            source="cepea", field=f"price_usd[{series_name}]",
+        ),
+        on_error="warn",
+    )
+    return ok
+
 
 def _parse_pct(s: str) -> Optional[float]:
     """Parsea string '5.5%' o '-3,10' a float. Skip-and-log si malformado."""
@@ -178,6 +218,10 @@ def _parse_tables(html: str, page: str, series_defs: list) -> list[dict]:
             price_date = _parse_date(cells[0])
             price_usd  = _parse_price(cells[1])
             if price_date is None or price_usd is None:
+                continue
+
+            # Range Gate §3.3 — descarta filas con precios fuera de rango
+            if not _validate_cepea_price(price_usd, series_name):
                 continue
 
             rec = {
