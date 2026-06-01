@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import CepeaPrice
+from services.data_quality import parse_log_warning
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -78,16 +79,20 @@ def _get_html(url: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _parse_pct(s: str) -> Optional[float]:
+    """Parsea string '5.5%' o '-3,10' a float. Skip-and-log si malformado."""
     try:
         return float(s.strip().replace("%", "").replace(",", "."))
-    except Exception:
+    except (ValueError, AttributeError, TypeError) as e:
+        parse_log_warning("cepea._parse_pct", s, e)
         return None
 
 
 def _parse_price(s: str) -> Optional[float]:
+    """Parsea string '18.6800' o '1,234.56' a float. Skip-and-log si malformado."""
     try:
         return float(s.strip().replace(",", ""))
-    except Exception:
+    except (ValueError, AttributeError, TypeError) as e:
+        parse_log_warning("cepea._parse_price", s, e)
         return None
 
 

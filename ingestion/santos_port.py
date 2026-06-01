@@ -36,6 +36,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import SantosPortSnapshot
+from services.data_quality import parse_log_warning
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -73,10 +74,18 @@ def _cells(tr) -> list[str]:
 
 
 def _parse_int(s: str) -> Optional[int]:
+    """Parsea tonelajes como '12,345 t' o '55000 ton' a int. Skip-and-log si malformado.
+
+    Devuelve None si el string es vacío o solo contiene caracteres no-numéricos.
+    Logs WARNING para cualquier ValueError / IndexError inesperado, evitando que
+    cambios estructurales del HTML del ship tracker introduzcan NULLs en masa
+    sin alerta.
+    """
     try:
         cleaned = re.sub(r"[^\d]", "", str(s).split()[0])
         return int(cleaned) if cleaned else None
-    except Exception:
+    except (ValueError, AttributeError, TypeError, IndexError) as e:
+        parse_log_warning("santos_port._parse_int", s, e)
         return None
 
 
