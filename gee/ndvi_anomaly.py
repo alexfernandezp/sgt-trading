@@ -621,20 +621,50 @@ def _compute_current(country: str, region: str, year: int, month: int) -> dict:
     return result
 
 
+def _prior_season(season: str) -> Optional[str]:
+    """
+    Devuelve la zafra inmediatamente anterior en formato CONAB ('YYYY/YY').
+    Ej.: _prior_season('2026/27') -> '2025/26'.
+    None si el formato no es parseable (defensa contra datos corruptos).
+    """
+    try:
+        start_str, _end_short = season.split("/")
+        start = int(start_str)
+        return f"{start - 1}/{str(start)[-2:]}"
+    except (AttributeError, ValueError):
+        return None
+
+
 def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
     """
-    Lee los 2 últimos levantamentos de conab_cana_levantamento y deduce dirección
-    (RECOVERY/DETERIORATION/STABLE) por delta de producción.
+    Deduce dirección CONAB (RECOVERY/DETERIORATION/STABLE) leyendo los
+    levantamentos más recientes de conab_cana_levantamento.
 
-    Robustez por defecto (BUSINESS_LOGIC §7.5.8):
-      No lanza excepción. Si no hay datos suficientes, datos stale, o falla DB,
-      retorna ("STABLE", True) loguendo WARNING. La política de robustness sobre
-      "raise" se eligió 2026-06-01 para evitar que el benchmark se rompa entero
-      cuando solo falta data — STABLE produce market_signal=NEUTRAL, que es la
-      degradación elegante apropiada.
+    Schema real (models/market_data.py:431):
+      season VARCHAR, levantamento INT, pub_date DATE,
+      sugar_total_mt NUMERIC, revision_sugar_pct NUMERIC.
 
-    Threshold delta: ±3% para evitar ruido de revisiones menores. El umbral está
-    documentado en BUSINESS_LOGIC §7.5.8 y es revisable tras shadow test.
+    Lógica jerárquica (BUSINESS_LOGIC §7.5.8):
+
+      1) PRIMARY — revision_sugar_pct presente:
+         Δ pre-computado por CONAB con metodología oficial. Se usa directo.
+
+      2) APERTURA DE ZAFRA — revision_sugar_pct=NULL y levantamento==1:
+         CONAB no emite revision en el primer levantamento de cada zafra
+         (no hay levantamento previo de la misma temporada). Comparar lev=1
+         vs lev=4 de la zafra anterior es phase-mixing (forecast pre-cosecha
+         vs cierre retrospectivo); las metodologías y confianza difieren.
+         Solución: YoY same-phase delta = compare lev=1 actual contra lev=1
+         de la zafra inmediatamente anterior. Same horizon, same method,
+         captura shock macroeconómico real.
+
+      3) FALLBACK STABLE — todos los demás casos (DB error, datos NULL,
+         stale > 130d, lev != 1 con revision NULL, prior lev=1 no en DB).
+
+    Threshold |Δ| >= 3% para RECOVERY/DETERIORATION (estable bajo ese umbral).
+
+    Robustez: no lanza excepción. Retorna ("STABLE", True) en todos los
+    failure modes, loguendo WARNING con contexto. Ver §7.5.8 para detalles.
 
     Returns:
       (direction, inferred=True) donde direction ∈ VALID_CONAB_DIRECTIONS.
@@ -645,61 +675,104 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
         from sqlalchemy.exc import SQLAlchemyError
     except ImportError as e:
         logger.warning(
-            "CONAB inference imports failed (%s) — fallback STABLE for %s",
-            e, region,
+            "CONAB imports failed (%s) — fallback STABLE for %s", e, region,
         )
         return "STABLE", True
     try:
         with SessionLocal() as session:
             rows = session.execute(text("""
-                SELECT harvest_year, forecast_round, sugar_total_mt, report_date
+                SELECT season, levantamento, pub_date,
+                       sugar_total_mt, revision_sugar_pct
                 FROM conab_cana_levantamento
-                ORDER BY report_date DESC NULLS LAST
-                LIMIT 2
+                ORDER BY pub_date DESC NULLS LAST
+                LIMIT 1
             """)).fetchall()
     except SQLAlchemyError as e:
         logger.warning(
-            "CONAB inference DB error (fallback STABLE for %s): %s", region, e,
+            "CONAB DB error (fallback STABLE for %s): %s", region, e,
         )
         return "STABLE", True
-    if len(rows) < 2:
+    if len(rows) < 1:
         logger.warning(
-            "CONAB inference: only %d levantamento(s) — fallback STABLE for %s",
-            len(rows), region,
+            "CONAB: no levantamentos disponibles — fallback STABLE for %s",
+            region,
         )
         return "STABLE", True
-    latest, previous = rows[0], rows[1]
-    latest_date = latest[3]
-    if latest_date is None:
+    latest = rows[0]
+    latest_season, latest_lev, latest_pub_date, latest_sugar, latest_revision = latest
+    if latest_pub_date is None:
         logger.warning(
-            "CONAB latest has no report_date — fallback STABLE for %s", region,
+            "CONAB latest has no pub_date — fallback STABLE for %s", region,
         )
         return "STABLE", True
     from datetime import date as _date
-    days_old = (_date.today() - latest_date).days
+    days_old = (_date.today() - latest_pub_date).days
     if days_old > 130:
         logger.warning(
             "CONAB stale (%dd > 130d) — fallback STABLE for %s",
             days_old, region,
         )
         return "STABLE", True
-    latest_sugar   = float(latest[2])   if latest[2]   is not None else None
-    previous_sugar = float(previous[2]) if previous[2] is not None else None
-    if latest_sugar is None or previous_sugar is None or previous_sugar == 0:
+
+    # PRIMARY: revision_sugar_pct pre-computado por CONAB
+    if latest_revision is not None:
+        revision = float(latest_revision)
+        source = "revision_pct"
+    # APERTURA DE ZAFRA: lev=1 sin revision → YoY same-phase delta
+    elif int(latest_lev or 0) == 1:
+        prior = _prior_season(latest_season)
+        if prior is None:
+            logger.warning(
+                "CONAB Apertura: cannot parse season=%r — fallback STABLE for %s",
+                latest_season, region,
+            )
+            return "STABLE", True
+        try:
+            with SessionLocal() as session:
+                prior_row = session.execute(text("""
+                    SELECT sugar_total_mt
+                    FROM conab_cana_levantamento
+                    WHERE season = :ps AND levantamento = 1
+                    LIMIT 1
+                """), {"ps": prior}).fetchone()
+        except SQLAlchemyError as e:
+            logger.warning(
+                "CONAB Apertura DB error (fallback STABLE for %s): %s",
+                region, e,
+            )
+            return "STABLE", True
+        if prior_row is None or prior_row[0] is None:
+            logger.warning(
+                "CONAB Apertura: prior season %s lev=1 not in DB — "
+                "fallback STABLE for %s", prior, region,
+            )
+            return "STABLE", True
+        prior_sugar = float(prior_row[0])
+        if prior_sugar == 0 or latest_sugar is None:
+            logger.warning(
+                "CONAB Apertura: sugar_total_mt missing/zero — "
+                "fallback STABLE for %s", region,
+            )
+            return "STABLE", True
+        revision = (float(latest_sugar) - prior_sugar) / prior_sugar * 100
+        source = f"yoy_apertura (vs {prior} lev=1: {prior_sugar:.2f}Mt)"
+    # ANOMALÍA: revision NULL en lev != 1 → no debería ocurrir, fallback STABLE
+    else:
         logger.warning(
-            "CONAB missing/zero sugar_total_mt — fallback STABLE for %s", region,
+            "CONAB revision_pct=NULL on non-opening levantamento (lev=%s) — "
+            "data anomaly, fallback STABLE for %s", latest_lev, region,
         )
         return "STABLE", True
-    delta_pct = (latest_sugar - previous_sugar) / previous_sugar * 100
-    if delta_pct >= 3.0:
+
+    if revision >= 3.0:
         direction = "RECOVERY"
-    elif delta_pct <= -3.0:
+    elif revision <= -3.0:
         direction = "DETERIORATION"
     else:
         direction = "STABLE"
     logger.info(
-        "CONAB inference for %s: latest=%.2fMt prev=%.2fMt delta=%+.2f%% -> %s",
-        region, latest_sugar, previous_sugar, delta_pct, direction,
+        "CONAB inference for %s: season=%s lev=%s Δ=%+.2f%% [%s] -> %s",
+        region, latest_season, latest_lev, revision, source, direction,
     )
     return direction, True
 

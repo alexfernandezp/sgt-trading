@@ -100,6 +100,45 @@ def cleanup_history(country: str = "BR_TEST", region: str = "BR_SP") -> None:
     nda._history_cache_path(country, region).unlink(missing_ok=True)
 
 
+# ─── DB mock infra para tests del fallback seasonal (T11-T15) ────────────
+def install_db_mock(latest_row: tuple | None,
+                    prior_lev1_row: tuple | None = None) -> object:
+    """
+    Monkey-patch database.SessionLocal para retornar rows determinísticos.
+
+    latest_row    : tupla (season, lev, pub_date, sugar_total_mt, revision_sugar_pct)
+                    o None para simular DB vacía
+    prior_lev1_row: tupla (sugar_total_mt,) o None para simular prior no en DB
+
+    Retorna el SessionLocal original para teardown.
+    """
+    import database
+
+    class _FakeResult:
+        def __init__(self, rows): self._rows = rows
+        def fetchall(self):  return self._rows
+        def fetchone(self):  return self._rows[0] if self._rows else None
+
+    class _FakeSession:
+        def execute(self, stmt, params=None):
+            # Query 1 (latest): no params, LIMIT 1
+            # Query 2 (prior lev=1): {'ps': '...'}
+            if params is None:
+                return _FakeResult([latest_row] if latest_row else [])
+            return _FakeResult([prior_lev1_row] if prior_lev1_row else [])
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+
+    original = database.SessionLocal
+    database.SessionLocal = lambda: _FakeSession()
+    return original
+
+
+def teardown_db_mock(original) -> None:
+    import database
+    database.SessionLocal = original
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Tests
 # ════════════════════════════════════════════════════════════════════════════
@@ -324,6 +363,108 @@ try:
 finally:
     teardown_mocks(originals); cleanup_history()
     NDA_LOGGER.removeHandler(capture)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# T11-T15: _infer_conab_direction con DB mock (sin GEE, sin DB real)
+# ════════════════════════════════════════════════════════════════════════════
+from datetime import date as _date
+
+# ───────────────────────────────────────────────────────────────────────────
+# T11: PRIMARY path — revision_sugar_pct presente
+# ───────────────────────────────────────────────────────────────────────────
+print("\n=== T11: PRIMARY revision_sugar_pct=-5 -> DETERIORATION ===")
+capture = LogCapture(); NDA_LOGGER.addHandler(capture)
+db_orig = install_db_mock(
+    latest_row=("2025/26", 4, _date(2026, 4, 27), 44.18, -5.0),
+)
+try:
+    direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
+    report("primary returns DETERIORATION",
+           direction == "DETERIORATION", f"got={direction}")
+    report("inferred=True", inferred is True)
+    report("source=revision_pct logged",
+           capture.has("INFO", "revision_pct"))
+finally:
+    teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# T12: APERTURA DE ZAFRA — lev=1 sin revision, prior lev=1 EN DB
+# ───────────────────────────────────────────────────────────────────────────
+print("\n=== T12: APERTURA YoY (lev=1, prior lev=1 found, +4.17%) -> RECOVERY ===")
+capture = LogCapture(); NDA_LOGGER.addHandler(capture)
+db_orig = install_db_mock(
+    latest_row=("2026/27", 1, _date(2026, 4, 28), 50.0, None),
+    prior_lev1_row=(48.0,),  # 2025/26 lev=1: 48 Mt → Δ = +4.17% → RECOVERY
+)
+try:
+    direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
+    report("apertura YoY returns RECOVERY",
+           direction == "RECOVERY", f"got={direction}")
+    report("source=yoy_apertura logged",
+           capture.has("INFO", "yoy_apertura"))
+    report("prior season reference in log",
+           capture.has("INFO", "2025/26"))
+finally:
+    teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# T13: APERTURA pero prior season lev=1 NO en DB -> STABLE
+# ───────────────────────────────────────────────────────────────────────────
+print("\n=== T13: APERTURA pero prior lev=1 not in DB -> STABLE ===")
+capture = LogCapture(); NDA_LOGGER.addHandler(capture)
+db_orig = install_db_mock(
+    latest_row=("2026/27", 1, _date(2026, 4, 28), 50.0, None),
+    prior_lev1_row=None,   # prior no encontrado
+)
+try:
+    direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
+    report("apertura missing prior -> STABLE",
+           direction == "STABLE", f"got={direction}")
+    report("WARNING 'prior season ... not in DB'",
+           capture.has("WARNING", "prior season 2025/26 lev=1 not in DB"))
+finally:
+    teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# T14: ANOMALÍA — revision=NULL en lev != 1 -> STABLE
+# ───────────────────────────────────────────────────────────────────────────
+print("\n=== T14: revision=NULL en lev=2 (data anomaly) -> STABLE ===")
+capture = LogCapture(); NDA_LOGGER.addHandler(capture)
+# pub_date reciente (sino el gate de freshness 130d dispara antes)
+db_orig = install_db_mock(
+    latest_row=("2025/26", 2, _date(2026, 5, 15), 44.5, None),
+)
+try:
+    direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
+    report("lev=2 with NULL revision -> STABLE",
+           direction == "STABLE", f"got={direction}")
+    report("WARNING 'non-opening levantamento'",
+           capture.has("WARNING", "non-opening levantamento"))
+finally:
+    teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# T15: APERTURA con delta marginal (<3%) -> STABLE
+# ───────────────────────────────────────────────────────────────────────────
+print("\n=== T15: APERTURA con delta marginal (+1.5%) -> STABLE ===")
+capture = LogCapture(); NDA_LOGGER.addHandler(capture)
+db_orig = install_db_mock(
+    latest_row=("2026/27", 1, _date(2026, 4, 28), 48.72, None),
+    prior_lev1_row=(48.0,),  # Δ = +1.5% -> STABLE
+)
+try:
+    direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
+    report("apertura marginal delta -> STABLE",
+           direction == "STABLE", f"got={direction}")
+    report("source=yoy_apertura still used",
+           capture.has("INFO", "yoy_apertura"))
+finally:
+    teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
 
 
 # ════════════════════════════════════════════════════════════════════════════

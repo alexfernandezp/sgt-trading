@@ -369,38 +369,77 @@ WARNING  gee.ndvi_anomaly | -> Market DIVERGENCE_BEARISH | CONAB=RECOVERY, satel
 `CONFIRMATION` se loguea a **INFO** (evento esperado, ruido bajo). `DIVERGENCE_*` se loguea
 a **WARNING** (señal alpha, debe llegar a sistemas de alertas).
 
-#### 7.5.8 Robustez de Inferencia CONAB
+#### 7.5.8 Inferencia CONAB — Lógica Jerárquica + Apertura de Zafra
 
-Decisión 2026-06-01: `_infer_conab_direction()` **NO lanza excepción** cuando no puede
-deducir la dirección. En su lugar retorna `("STABLE", inferred=True)` con `logger.warning`.
+Implementado en `_infer_conab_direction()`. Schema real (models/market_data.py:431):
+`season VARCHAR, levantamento INT, pub_date DATE, sugar_total_mt NUMERIC,
+revision_sugar_pct NUMERIC`.
 
-**Razón:** una falla en la inferencia CONAB (DB inaccesible, levantamentos insuficientes,
-datos stale > 130 días, columnas null) no debe romper el benchmark entero. STABLE produce
-`market_signal = NEUTRAL` que es la **degradación elegante** apropiada: el sistema reconoce
-que no tiene base para una señal direccional pero sigue calculando el anomaly NDVI
-observable.
+**Lógica jerárquica de 3 niveles:**
 
-**Casos que disparan fallback STABLE** (todos loguean WARNING con contexto):
+##### 1. PRIMARY — `revision_sugar_pct` presente
+
+Δ pre-computado por CONAB con metodología oficial. Se usa siempre que esté presente
+(típicamente en `levantamento ∈ {2, 3, 4}` de cada zafra).
+
+##### 2. APERTURA DE ZAFRA — `revision_sugar_pct=NULL` y `levantamento=1`
+
+CONAB **no emite revision en el primer levantamento de cada zafra** (no existe
+levantamento previo de la misma temporada con el que comparar). Decisión arquitectural
+2026-06-01: cuando esto ocurre, el sistema **NO compara contra el levantamento final
+de la zafra anterior** (`lev=4`) — eso sería *phase-mixing*: mezclar un forecast
+pre-cosecha contra un cierre retrospectivo, con metodologías y niveles de confianza
+incompatibles.
+
+En su lugar: **YoY same-phase comparison**. Comparar `lev=1` actual contra `lev=1`
+de la zafra **inmediatamente anterior**:
+
+    Δ = (sugar_total_mt[season, lev=1] − sugar_total_mt[prior_season, lev=1])
+          / sugar_total_mt[prior_season, lev=1] × 100
+
+**Por qué este enfoque es correcto:**
+
+| Aspecto | lev=1 vs lev=4 ❌ | lev=1 vs lev=1 ✅ |
+|---------|------------------|-------------------|
+| Horizonte de forecast | Mezclado (pre-cosecha vs retrospectivo) | Idéntico (ambos pre-cosecha) |
+| Metodología CONAB | Distinta (forecast vs final observation) | Idéntica |
+| Fracción de zafra cosechada | 0% vs ~100% | 0% vs 0% |
+| Información capturada | Sesgo de revisión de zafra anterior | Shock macroeconómico real |
+| Estándar de industria | — | Wilmar, Cargill, Alvean usan este |
+
+**Implicación operacional:** durante el año (lev 2-3-4) el sistema mide el **pulso
+del mercado** (ajustes marginales mes a mes). En abril (lev=1) cambia automáticamente
+a medir el **shock macroeconómico anual** (clima 12 meses antes, área plantada,
+mandato etanol). Comportamiento bimodal documentado, no es un bug.
+
+##### 3. FALLBACK STABLE — todos los demás casos
+
+Retorna `("STABLE", inferred=True)` con `logger.warning`. Casos:
 
   - Tabla `conab_cana_levantamento` inaccesible (ImportError o SQLAlchemyError)
-  - Menos de 2 levantamentos disponibles
-  - `report_date` del último levantamento es NULL
-  - Último levantamento > 130 días (BUSINESS_LOGIC §4 freshness max_age_days)
-  - `sugar_total_mt` NULL en alguno de los 2 últimos registros
-  - `previous_sugar == 0` (división por cero)
+  - `len(rows) < 1` — no hay levantamentos en DB
+  - `pub_date` del último es NULL
+  - Último levantamento > 130 días (§4 freshness)
+  - APERTURA pero `prior_season lev=1` no existe en DB (bootstrap incompleto)
+  - `season` no parseable a formato `YYYY/YY` (`_prior_season` retorna None)
+  - `revision_sugar_pct=NULL` en `lev != 1` (anomalía de datos: CONAB **debe** emitir
+    revision en lev 2/3/4; si no está, los datos son sospechosos)
+  - `sugar_total_mt` NULL o cero
 
-**Threshold delta:** `±3%` separa RECOVERY/DETERIORATION de STABLE. Valor elegido como
-compromise entre:
-  - Más sensible (±1%): captura más señales pero muchas son ruido de revisión menor entre
-    levantamentos del mismo año (típico ±1-2%)
-  - Más estricto (±5%): pierde divergencias reales en años de stress moderado
+**Threshold |Δ| ≥ 3%** para RECOVERY / DETERIORATION (estable bajo ese umbral). Aplica
+tanto a `revision_sugar_pct` como al delta YoY de apertura — ambos miden cambio
+porcentual de producción esperada y comparten umbral consistente.
 
-Revisable tras shadow test Step F.
+**Por qué la política de no-raise:** una falla en la inferencia CONAB no debe romper
+el benchmark NDVI entero. STABLE produce `market_signal = NEUTRAL` (ver matriz §7.5.5),
+que es la degradación elegante: el sistema reconoce que no tiene base para señal
+direccional pero sigue calculando el anomaly observable. Peor consecuencia: perder
+oportunidades. Nunca: generar falsas alarmas.
 
-**Implicación para la matriz §7.5.5:** Cuando `direction = STABLE`, todos los outputs son
-NEUTRAL (fila correspondiente en la matriz). Por tanto, un fallback a STABLE no genera
-señal de trading espuria — la peor consecuencia es perder oportunidades, no generar
-falsas alarmas.
+**Auditoría:** el log incluye el `source` exacto utilizado:
+  - `revision_pct` — vía PRIMARY
+  - `yoy_apertura (vs YYYY/YY lev=1: NN.NNMt)` — vía APERTURA
+  - WARNING explícito con razón cuando fallback STABLE
 
 ---
 
