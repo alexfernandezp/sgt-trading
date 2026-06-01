@@ -205,6 +205,24 @@ def _history_cache_path(country: str, region: str) -> Path:
 # Internal helpers
 # ════════════════════════════════════════════════════════════════════════════
 
+def _atomic_replace(src: Path, dst: Path, max_retries: int = 5) -> None:
+    """
+    Path.replace() con retry sobre PermissionError transient.
+
+    Windows puede dar WinError 5 (Access Denied) si antivirus/indexer toca el
+    archivo target en el momento del rename. La operación es por naturaleza
+    atomic; el retry absorbe la flap.
+    """
+    for attempt in range(max_retries):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
 def _ee_call_with_retry(
     callable_fn: Callable,
     *,
@@ -453,7 +471,7 @@ def _save_cache(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(enriched, indent=2, default=str), encoding="utf-8")
-    tmp_path.replace(path)
+    _atomic_replace(tmp_path, path)
     logger.debug("cache SAVED: %s", path.name)
 
 
@@ -531,7 +549,7 @@ def _append_anomaly_to_history(country: str, region: str,
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
+    _atomic_replace(tmp_path, path)
     logger.debug(
         "history APPEND %s_%s y=%d m=%d a=%.4f cov=%.2f",
         country, region, year, month, anomaly, coverage,
@@ -759,7 +777,104 @@ def compute_ndvi_anomaly(
                                                           (típico: bug GEE / región mal definida)
       DataQualityError(field="gee_call")                : fallo en request a Earth Engine
     """
-    raise NotImplementedError("Step D — main compute_ndvi_anomaly")
+    from datetime import date as _date, timedelta as _timedelta
+    from services.data_quality import validate_range
+
+    # 1. Resolver defaults: mes anterior completo
+    today = _date.today()
+    if year is None or month is None:
+        prev_month_last_day = today.replace(day=1) - _timedelta(days=1)
+        if year is None:
+            year = prev_month_last_day.year
+        if month is None:
+            month = prev_month_last_day.month
+
+    warnings_acc: list[str] = []
+
+    # 2. Baseline 5yr (cache TTL 180d)
+    baseline = _compute_baseline(country, region, month)
+    baseline_ndvi = baseline.get("baseline_ndvi")
+    historical_coverage = float(baseline.get("historical_coverage_pct") or 0.0)
+
+    # 3. Gate histórico (80% — sin tiers, crítico siempre)
+    validate_range(
+        historical_coverage,
+        min_value=MIN_HISTORICAL_COVERAGE, max_value=1.0,
+        source="gee_ndvi_anomaly", field="historical_coverage_pct",
+    )
+
+    # 4. Current month NDVI (cache TTL 7d)
+    current = _compute_current(country, region, year, month)
+    current_ndvi = current.get("current_ndvi")
+    pixel_coverage = float(current.get("pixel_coverage_pct") or 0.0)
+
+    # 5. Coverage gate tiered (raise <30%, warning 30-50%)
+    _validate_coverage_gate(
+        pixel_coverage,
+        source="gee_ndvi_anomaly", field="pixel_coverage_pct",
+    )
+    if pixel_coverage < COVERAGE_WARNING_THRESHOLD:
+        warnings_acc.append(
+            f"pixel_coverage_degraded={pixel_coverage:.1%}"
+        )
+
+    # 6. Validar NDVIs no-None
+    if baseline_ndvi is None or current_ndvi is None:
+        raise DataQualityError(
+            "NDVI value is None — likely GEE returned empty result",
+            source="gee_ndvi_anomaly", field="anomaly_value",
+            value=f"baseline={baseline_ndvi}, current={current_ndvi}",
+            expected="float NDVI values from GEE",
+        )
+
+    # 7. Calcular anomalía + validar rango
+    anomaly = float(current_ndvi) - float(baseline_ndvi)
+    validate_range(
+        anomaly,
+        min_value=ANOMALY_VALID_RANGE[0], max_value=ANOMALY_VALID_RANGE[1],
+        source="gee_ndvi_anomaly", field="anomaly_value",
+    )
+
+    # 8. History → robust_stats (excluyendo current — todavía no appendado)
+    history = _load_anomaly_history(country, region)
+    stats = robust_stats(history, anomaly)
+
+    # 9. Append a history (después de stats: current no se incluye en su propio rank)
+    _append_anomaly_to_history(country, region, year, month, anomaly, pixel_coverage)
+
+    # 10. Construir result frozen
+    result = NdviAnomalyResult(
+        country=country, region=region, year=year, month=month,
+        anomaly_value=round(anomaly, 4),
+        current_ndvi=round(float(current_ndvi), 4),
+        baseline_ndvi=round(float(baseline_ndvi), 4),
+        pixel_coverage_pct=round(pixel_coverage, 3),
+        historical_coverage_pct=round(historical_coverage, 3),
+        percentile_rank=stats.get("percentile_rank"),
+        modified_z=stats.get("modified_z"),
+        conviction=stats.get("conviction", "INSUFFICIENT_DATA"),
+        is_extreme_high=bool(stats.get("is_extreme_high", False)),
+        is_extreme_low=bool(stats.get("is_extreme_low", False)),
+        n_historical_obs=len(history),
+        computed_at=datetime.now(),
+        warnings=tuple(warnings_acc),
+    )
+
+    # 11. Audit log INFO (BUSINESS_LOGIC §5)
+    pct_s = (f"{result.percentile_rank:.1f}"
+             if result.percentile_rank is not None else "N/A")
+    mz_s  = (f"{result.modified_z:+.2f}"
+             if result.modified_z is not None else "N/A")
+    logger.info(
+        "ndvi_anomaly | %s_%s | y=%d m=%d | anomaly=%+.4f cur=%.4f base=%.4f "
+        "| pct=%s mZ=%s conviction=%s | coverage=%.1f%% n_hist=%d",
+        country, region, year, month,
+        anomaly, current_ndvi, baseline_ndvi,
+        pct_s, mz_s, result.conviction,
+        pixel_coverage * 100, len(history),
+    )
+
+    return result
 
 
 def benchmark_vs_conab_report(
@@ -800,4 +915,75 @@ def benchmark_vs_conab_report(
     retorna ("STABLE", True) con WARNING log. Esto produce market_signal=NEUTRAL
     como degradación elegante. Ver BUSINESS_LOGIC §7.5.8.
     """
-    raise NotImplementedError("Step D — benchmark_vs_conab_report wrapper")
+    # 1. Validación de direction explícita
+    if conab_direction is not None and conab_direction not in VALID_CONAB_DIRECTIONS:
+        raise ValueError(
+            f"conab_direction must be one of {VALID_CONAB_DIRECTIONS}, "
+            f"got {conab_direction!r}"
+        )
+
+    # 2. Compute anomaly (propaga DataQualityError si gate falla)
+    anomaly_result = compute_ndvi_anomaly(country, region, year=year, month=month)
+
+    # 3. Resolver direction (inferir si no se pasó explícita)
+    if conab_direction is None:
+        direction, inferred = _infer_conab_direction(country, region)
+    else:
+        direction, inferred = conab_direction, False
+
+    # 4. Clasificar
+    signal = _classify_market_signal(anomaly_result.percentile_rank, direction)
+
+    # 5. Construir audit log lines (formato BUSINESS_LOGIC §5)
+    pct_s = (f"{anomaly_result.percentile_rank:.1f}"
+             if anomaly_result.percentile_rank is not None else "N/A")
+    mz_s  = (f"{anomaly_result.modified_z:+.2f}"
+             if anomaly_result.modified_z is not None else "N/A")
+    line1 = (
+        f"Benchmark GEE vs CONAB | Region={region} | "
+        f"Percentile={pct_s} | mZ={mz_s}"
+    )
+    logger.info("%s", line1)
+
+    # Audit segunda línea según signal
+    if signal == "CONFIRMATION":
+        anchor = (
+            f"P={pct_s} >= {PERCENTILE_HIGH:.0f}"
+            if direction == "RECOVERY"
+            else f"P={pct_s} <= {PERCENTILE_LOW:.0f}"
+        )
+        line2 = f"-> Market Confirmation | direction={direction}, {anchor}"
+        logger.info("%s", line2)
+    elif signal == "DIVERGENCE_BULLISH":
+        line2 = (
+            f"-> Market DIVERGENCE_BULLISH | CONAB=DETERIORATION, "
+            f"satellite P={pct_s} (above baseline)"
+        )
+        logger.warning("%s", line2)
+    elif signal == "DIVERGENCE_BEARISH":
+        line2 = (
+            f"-> Market DIVERGENCE_BEARISH | CONAB=RECOVERY, "
+            f"satellite P={pct_s} (below baseline)"
+        )
+        logger.warning("%s", line2)
+    else:  # NEUTRAL
+        line2 = (
+            f"-> Market NEUTRAL | direction={direction}, P={pct_s} "
+            f"(no actionable divergence)"
+        )
+        logger.info("%s", line2)
+
+    # 6. Propagar warnings del anomaly_result al audit log si hay alguno
+    audit_lines: list[str] = [line1, line2]
+    for w in anomaly_result.warnings:
+        warn_line = f"-> WARNING propagated: {w}"
+        logger.warning("%s", warn_line)
+        audit_lines.append(warn_line)
+
+    return MarketBenchmark(
+        anomaly_result=anomaly_result,
+        conab_direction=direction,
+        conab_inferred=inferred,
+        market_signal=signal,
+        audit_log_lines=tuple(audit_lines),
+    )
