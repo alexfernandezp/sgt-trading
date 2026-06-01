@@ -25,6 +25,7 @@ Architecture Contract compliance:
   - Audit logging follows BUSINESS_LOGIC.md §5 (Principle 5: Logging Standards)
   - Module is decoupled from authentication: ee.Initialize() is the caller's responsibility
 """
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -288,21 +289,86 @@ def _load_cache(path: Path, ttl_days: int) -> Optional[dict]:
       - computed_at más antiguo que ttl_days
       - cache_version distinto a CACHE_SCHEMA_VERSION
     """
-    raise NotImplementedError("Step C — cache read + TTL + schema check")
+    if not path.exists():
+        logger.debug("cache MISS (not found): %s", path.name)
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        logger.warning("cache corrupt, treating as miss: %s (%s)", path.name, e)
+        return None
+    if data.get("cache_version") != CACHE_SCHEMA_VERSION:
+        logger.debug(
+            "cache MISS (schema v%s != v%s): %s",
+            data.get("cache_version"), CACHE_SCHEMA_VERSION, path.name,
+        )
+        return None
+    computed_at_str = data.get("computed_at")
+    if not computed_at_str:
+        logger.warning("cache missing computed_at: %s", path.name)
+        return None
+    try:
+        computed_at = datetime.fromisoformat(computed_at_str)
+    except ValueError:
+        logger.warning("cache invalid computed_at: %s — %s", computed_at_str, path.name)
+        return None
+    age_days = (datetime.now() - computed_at).days
+    if age_days > ttl_days:
+        logger.debug(
+            "cache MISS (stale %dd > ttl %dd): %s",
+            age_days, ttl_days, path.name,
+        )
+        return None
+    logger.debug("cache HIT (age %dd): %s", age_days, path.name)
+    return data
 
 
 def _save_cache(path: Path, data: dict) -> None:
     """Atomic write: write a .tmp y rename. Crea directorios padre si no existen."""
-    raise NotImplementedError("Step C — atomic cache write")
+    enriched = {
+        **data,
+        "cache_version": CACHE_SCHEMA_VERSION,
+        "computed_at": data.get("computed_at") or datetime.now().isoformat(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(enriched, indent=2, default=str), encoding="utf-8")
+    tmp_path.replace(path)
+    logger.debug("cache SAVED: %s", path.name)
 
 
 def _load_anomaly_history(country: str, region: str) -> list[float]:
     """
     Lee history append-only para esta región.
-    Retorna lista ordenada cronológicamente (antiguo → reciente).
+    Retorna lista ordenada cronológicamente (antiguo → reciente), truncada a
+    las últimas HISTORY_WINDOW_MONTHS observaciones (rolling window §7.5.4).
     Lista vacía si no hay history (primera corrida sin bootstrap).
     """
-    raise NotImplementedError("Step C — history JSON read")
+    path = _history_cache_path(country, region)
+    if not path.exists():
+        logger.debug("history empty for %s_%s (no file)", country, region)
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        logger.warning(
+            "history corrupt, treating as empty: %s (%s)", path.name, e,
+        )
+        return []
+    entries = data.get("anomalies", [])
+    # Ordenar cronológicamente (oldest → newest) y truncar a ventana deslizante
+    sorted_entries = sorted(
+        entries, key=lambda e: (e.get("year", 0), e.get("month", 0)),
+    )
+    window = sorted_entries[-HISTORY_WINDOW_MONTHS:]
+    anomalies = [
+        float(e["anomaly"]) for e in window if e.get("anomaly") is not None
+    ]
+    logger.debug(
+        "history loaded for %s_%s: %d entries (window=%d)",
+        country, region, len(anomalies), HISTORY_WINDOW_MONTHS,
+    )
+    return anomalies
 
 
 def _append_anomaly_to_history(country: str, region: str,
@@ -311,7 +377,45 @@ def _append_anomaly_to_history(country: str, region: str,
     """
     Append entry al JSON history. Deduplica por (year, month) — re-cómputo sobrescribe.
     """
-    raise NotImplementedError("Step C — history JSON append")
+    path = _history_cache_path(country, region)
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "history corrupt during append, reinitializing: %s (%s)",
+                path.name, e,
+            )
+            data = None
+    else:
+        data = None
+    if data is None:
+        data = {
+            "country": country, "region": region,
+            "cache_version": CACHE_SCHEMA_VERSION, "anomalies": [],
+        }
+    # Dedup by (year, month) — la nueva entry reemplaza
+    filtered = [
+        e for e in data.get("anomalies", [])
+        if not (e.get("year") == year and e.get("month") == month)
+    ]
+    filtered.append({
+        "year": year,
+        "month": month,
+        "anomaly": round(float(anomaly), 4),
+        "coverage": round(float(coverage), 3),
+        "appended_at": datetime.now().isoformat(),
+    })
+    data["anomalies"] = filtered
+    data["cache_version"] = CACHE_SCHEMA_VERSION
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
+    logger.debug(
+        "history APPEND %s_%s y=%d m=%d a=%.4f cov=%.2f",
+        country, region, year, month, anomaly, coverage,
+    )
 
 
 def _compute_baseline(country: str, region: str, month: int) -> dict:
