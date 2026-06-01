@@ -261,7 +261,23 @@ def _validate_coverage_gate(coverage_pct: float, *,
     Raises:
       DataQualityError(field=field): si coverage_pct < COVERAGE_CRITICAL_THRESHOLD.
     """
-    raise NotImplementedError("Step C — tiered coverage gate")
+    if coverage_pct < COVERAGE_CRITICAL_THRESHOLD:
+        raise DataQualityError(
+            f"pixel coverage critically low ({coverage_pct:.1%}) — signal suppressed",
+            source=source, field=field,
+            value=round(coverage_pct, 4),
+            expected=f">= {COVERAGE_CRITICAL_THRESHOLD:.0%}",
+        )
+    if coverage_pct < COVERAGE_WARNING_THRESHOLD:
+        logger.warning(
+            "%s.%s coverage degraded (%.1f%%) — signal computed but flagged",
+            source, field, coverage_pct * 100,
+        )
+        return
+    logger.info(
+        "%s.%s coverage OK (%.1f%%)",
+        source, field, coverage_pct * 100,
+    )
 
 
 def _load_cache(path: Path, ttl_days: int) -> Optional[dict]:
