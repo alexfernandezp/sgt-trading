@@ -107,9 +107,10 @@ def install_db_mock(latest_row: tuple | None,
     """
     Monkey-patch database.SessionLocal para retornar rows determinísticos.
 
-    latest_row    : tupla (season, lev, pub_date, sugar_total_mt, revision_sugar_pct)
-                    o None para simular DB vacía
-    prior_lev1_row: tupla (sugar_total_mt,) o None para simular prior no en DB
+    Schema cane-based (post §7.5.8 refactor):
+      latest_row    : tupla (season, lev, pub_date, yoy_cane_pct, cane_total_mt)
+                      o None para simular DB vacía
+      prior_lev1_row: tupla (cane_total_mt,) o None para simular prior no en DB
 
     Retorna el SessionLocal original para teardown.
     """
@@ -374,18 +375,19 @@ from datetime import date as _date
 # ───────────────────────────────────────────────────────────────────────────
 # T11: PRIMARY path — revision_sugar_pct presente
 # ───────────────────────────────────────────────────────────────────────────
-print("\n=== T11: PRIMARY revision_sugar_pct=-5 -> DETERIORATION ===")
+print("\n=== T11: PRIMARY yoy_cane_pct=-5 -> DETERIORATION ===")
 capture = LogCapture(); NDA_LOGGER.addHandler(capture)
 db_orig = install_db_mock(
-    latest_row=("2025/26", 4, _date(2026, 4, 27), 44.18, -5.0),
+    # (season, lev, pub_date, yoy_cane_pct=-5%, cane_total_mt=720)
+    latest_row=("2025/26", 4, _date(2026, 4, 27), -5.0, 720.0),
 )
 try:
     direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
     report("primary returns DETERIORATION",
            direction == "DETERIORATION", f"got={direction}")
     report("inferred=True", inferred is True)
-    report("source=revision_pct logged",
-           capture.has("INFO", "revision_pct"))
+    report("source=yoy_cane_pct logged",
+           capture.has("INFO", "yoy_cane_pct"))
 finally:
     teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
 
@@ -393,18 +395,20 @@ finally:
 # ───────────────────────────────────────────────────────────────────────────
 # T12: APERTURA DE ZAFRA — lev=1 sin revision, prior lev=1 EN DB
 # ───────────────────────────────────────────────────────────────────────────
-print("\n=== T12: APERTURA YoY (lev=1, prior lev=1 found, +4.17%) -> RECOVERY ===")
+print("\n=== T12: APERTURA YoY CAÑA (lev=1, prior cane found, +4.29%) -> RECOVERY ===")
 capture = LogCapture(); NDA_LOGGER.addHandler(capture)
 db_orig = install_db_mock(
-    latest_row=("2026/27", 1, _date(2026, 4, 28), 50.0, None),
-    prior_lev1_row=(48.0,),  # 2025/26 lev=1: 48 Mt → Δ = +4.17% → RECOVERY
+    # (season, lev, pub_date, yoy_cane_pct=NULL, cane_total_mt=730)
+    latest_row=("2026/27", 1, _date(2026, 4, 28), None, 730.0),
+    # prior 2025/26 lev=1: cane=700 Mt → Δ = (730-700)/700 = +4.29% → RECOVERY
+    prior_lev1_row=(700.0,),
 )
 try:
     direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
-    report("apertura YoY returns RECOVERY",
+    report("apertura YoY cane returns RECOVERY",
            direction == "RECOVERY", f"got={direction}")
-    report("source=yoy_apertura logged",
-           capture.has("INFO", "yoy_apertura"))
+    report("source=yoy_apertura_cane logged",
+           capture.has("INFO", "yoy_apertura_cane"))
     report("prior season reference in log",
            capture.has("INFO", "2025/26"))
 finally:
@@ -414,18 +418,18 @@ finally:
 # ───────────────────────────────────────────────────────────────────────────
 # T13: APERTURA pero prior season lev=1 NO en DB -> STABLE
 # ───────────────────────────────────────────────────────────────────────────
-print("\n=== T13: APERTURA pero prior lev=1 not in DB -> STABLE ===")
+print("\n=== T13: APERTURA pero prior lev=1 cane not in DB -> STABLE ===")
 capture = LogCapture(); NDA_LOGGER.addHandler(capture)
 db_orig = install_db_mock(
-    latest_row=("2026/27", 1, _date(2026, 4, 28), 50.0, None),
-    prior_lev1_row=None,   # prior no encontrado
+    latest_row=("2026/27", 1, _date(2026, 4, 28), None, 730.0),
+    prior_lev1_row=None,   # prior no encontrado en DB
 )
 try:
     direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
     report("apertura missing prior -> STABLE",
            direction == "STABLE", f"got={direction}")
-    report("WARNING 'prior season ... not in DB'",
-           capture.has("WARNING", "prior season 2025/26 lev=1 not in DB"))
+    report("WARNING 'prior season ... cane_total_mt not in DB'",
+           capture.has("WARNING", "cane_total_mt not in DB"))
 finally:
     teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
 
@@ -433,15 +437,15 @@ finally:
 # ───────────────────────────────────────────────────────────────────────────
 # T14: ANOMALÍA — revision=NULL en lev != 1 -> STABLE
 # ───────────────────────────────────────────────────────────────────────────
-print("\n=== T14: revision=NULL en lev=2 (data anomaly) -> STABLE ===")
+print("\n=== T14: yoy_cane_pct=NULL en lev=2 (data anomaly) -> STABLE ===")
 capture = LogCapture(); NDA_LOGGER.addHandler(capture)
 # pub_date reciente (sino el gate de freshness 130d dispara antes)
 db_orig = install_db_mock(
-    latest_row=("2025/26", 2, _date(2026, 5, 15), 44.5, None),
+    latest_row=("2025/26", 2, _date(2026, 5, 15), None, 720.0),
 )
 try:
     direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
-    report("lev=2 with NULL revision -> STABLE",
+    report("lev=2 with NULL yoy_cane_pct -> STABLE",
            direction == "STABLE", f"got={direction}")
     report("WARNING 'non-opening levantamento'",
            capture.has("WARNING", "non-opening levantamento"))
@@ -452,20 +456,58 @@ finally:
 # ───────────────────────────────────────────────────────────────────────────
 # T15: APERTURA con delta marginal (<3%) -> STABLE
 # ───────────────────────────────────────────────────────────────────────────
-print("\n=== T15: APERTURA con delta marginal (+1.5%) -> STABLE ===")
+print("\n=== T15: APERTURA CAÑA con delta marginal (+1.71%) -> STABLE ===")
 capture = LogCapture(); NDA_LOGGER.addHandler(capture)
 db_orig = install_db_mock(
-    latest_row=("2026/27", 1, _date(2026, 4, 28), 48.72, None),
-    prior_lev1_row=(48.0,),  # Δ = +1.5% -> STABLE
+    # cane: 712 vs prior 700 → Δ = +1.71% (debajo del threshold ±3%)
+    latest_row=("2026/27", 1, _date(2026, 4, 28), None, 712.0),
+    prior_lev1_row=(700.0,),
 )
 try:
     direction, inferred = nda._infer_conab_direction("BR", "BR_SP")
-    report("apertura marginal delta -> STABLE",
+    report("apertura cane marginal delta -> STABLE",
            direction == "STABLE", f"got={direction}")
-    report("source=yoy_apertura still used",
-           capture.has("INFO", "yoy_apertura"))
+    report("source=yoy_apertura_cane still used",
+           capture.has("INFO", "yoy_apertura_cane"))
 finally:
     teardown_db_mock(db_orig); NDA_LOGGER.removeHandler(capture)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# T16: _load_anomaly_history self-inclusion fix
+# ════════════════════════════════════════════════════════════════════════════
+print("\n=== T16: _load_anomaly_history excludes self (year, month) ===")
+country, region = "TEST_BR", "T16_REGION"
+p = nda._history_cache_path(country, region)
+p.parent.mkdir(parents=True, exist_ok=True)
+p.unlink(missing_ok=True)
+nda._append_anomaly_to_history(country, region, 2024, 6, -0.05, 0.9)
+nda._append_anomaly_to_history(country, region, 2024, 7,  0.02, 0.9)
+nda._append_anomaly_to_history(country, region, 2024, 8,  0.10, 0.9)
+
+# Sin exclude: 3 entries
+h_all = nda._load_anomaly_history(country, region)
+report("default load returns 3 entries", len(h_all) == 3, f"got {len(h_all)}")
+
+# Exclude (2024, 7): 2 entries, +0.02 removido
+h_excl = nda._load_anomaly_history(
+    country, region, exclude_year=2024, exclude_month=7,
+)
+report("exclude (2024,7) returns 2 entries", len(h_excl) == 2, f"got {len(h_excl)}")
+report("excluded value 0.02 not in history",
+       not any(abs(v - 0.02) < 1e-6 for v in h_excl))
+
+# Exclude no-match: 3 entries
+h_nomatch = nda._load_anomaly_history(
+    country, region, exclude_year=1999, exclude_month=1,
+)
+report("non-matching exclude returns all 3", len(h_nomatch) == 3)
+
+# Solo un kwarg → no filtra (defensiva)
+h_partial = nda._load_anomaly_history(country, region, exclude_year=2024)
+report("only exclude_year (no month) -> no filter", len(h_partial) == 3)
+
+p.unlink(missing_ok=True)
 
 
 # ════════════════════════════════════════════════════════════════════════════

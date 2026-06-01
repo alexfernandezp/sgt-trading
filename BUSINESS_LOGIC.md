@@ -388,77 +388,109 @@ WARNING  gee.ndvi_anomaly | -> Market DIVERGENCE_BEARISH | CONAB=RECOVERY, satel
 `CONFIRMATION` se loguea a **INFO** (evento esperado, ruido bajo). `DIVERGENCE_*` se loguea
 a **WARNING** (señal alpha, debe llegar a sistemas de alertas).
 
-#### 7.5.8 Inferencia CONAB — Lógica Jerárquica + Apertura de Zafra
+#### 7.5.8 Inferencia CONAB — FIELD-level (Caña), no Sugar
 
-Implementado en `_infer_conab_direction()`. Schema real (models/market_data.py:431):
-`season VARCHAR, levantamento INT, pub_date DATE, sugar_total_mt NUMERIC,
-revision_sugar_pct NUMERIC`.
+Implementado en `_infer_conab_direction()`. **Decisión arquitectural crítica
+(2026-06-01):** la dirección CONAB que cruzamos con NDVI se ancla a métricas de
+**caña** (`yoy_cane_pct`, `cane_total_mt`), **NO a azúcar** (`sugar_total_mt`,
+`revision_sugar_pct`).
 
-**Lógica jerárquica de 3 niveles:**
+##### 7.5.8.1 Por qué CAÑA y no AZÚCAR — el trap del mix shift
 
-##### 1. PRIMARY — `revision_sugar_pct` presente
+El satélite NDVI observa el **campo** (caña creciendo, biomasa fotosintética).
+El número `sugar_total_mt` de CONAB es **post-molienda**: incorpora la decisión
+industrial del mix azúcar/etanol que el satélite no puede ver. Las moliendas
+brasileñas eligen el mix cada zafra en función de:
 
-Δ pre-computado por CONAB con metodología oficial. Se usa siempre que esté presente
-(típicamente en `levantamento ∈ {2, 3, 4}` de cada zafra).
+  - Paridad económica (precio del azúcar futuro vs etanol hidratado spot)
+  - Quotas de exportación contratadas
+  - Capacidad de almacenamiento
+  - Margen industrial de cada producto
 
-##### 2. APERTURA DE ZAFRA — `revision_sugar_pct=NULL` y `levantamento=1`
+**Caso real verificado en DB (2026/27 lev=1):**
 
-CONAB **no emite revision en el primer levantamento de cada zafra** (no existe
-levantamento previo de la misma temporada con el que comparar). Decisión arquitectural
-2026-06-01: cuando esto ocurre, el sistema **NO compara contra el levantamento final
-de la zafra anterior** (`lev=4`) — eso sería *phase-mixing*: mezclar un forecast
-pre-cosecha contra un cierre retrospectivo, con metodologías y niveles de confianza
-incompatibles.
+| Métrica | Valor publicado | Lectura |
+|---------|----------------|---------|
+| `yoy_cane_pct` | **+5.30%** | Caña SUBE +5.30% YoY (campo más sano) |
+| `yoy_sugar_pct` | **−0.50%** | Azúcar prácticamente plano YoY |
+| **Gap implícito** | **+5.80 pp** | Desvío industrial a etanol |
 
-En su lugar: **YoY same-phase comparison**. Comparar `lev=1` actual contra `lev=1`
-de la zafra **inmediatamente anterior**:
+Si la dirección CONAB se anclase a sugar (caída −0.50% / −4.29% derivado vs
+lev=1 anterior), el sistema reportaría `DETERIORATION`. Cruzado con un NDVI
+sano produciría `DIVERGENCE_BULLISH` espurio: "el satélite ve campo bien pero
+el azúcar baja, alpha alcista". **Falso.** La realidad: el campo SÍ está bien
+(+5.30%); el azúcar baja por decisión de mix, no por shock agronómico.
 
-    Δ = (sugar_total_mt[season, lev=1] − sugar_total_mt[prior_season, lev=1])
-          / sugar_total_mt[prior_season, lev=1] × 100
+Anclar la dirección a CAÑA (FIELD-level) elimina este modo de fallo y restaura
+la coherencia física: ambas métricas (NDVI y caña) miden el mismo fenómeno —
+producción del cultivo en pie.
 
-**Por qué este enfoque es correcto:**
+##### 7.5.8.2 Schema y Lógica Jerárquica
+
+Schema (models/market_data.py:431):
+`season VARCHAR, levantamento INT, pub_date DATE, yoy_cane_pct NUMERIC,
+cane_total_mt NUMERIC`.
+
+**3 niveles:**
+
+1. **PRIMARY — `yoy_cane_pct` presente en la fila latest:**
+   CONAB publica esta métrica directamente. Sin derivación. Threshold ±3%.
+   Source en log: `yoy_cane_pct`.
+
+2. **APERTURA YoY CAÑA — `lev=1` con `yoy_cane_pct=NULL`:**
+   Bootstrap incompleto en la fila actual (raro). Fallback: derivar manual
+   buscando `lev=1` de la zafra inmediatamente anterior y comparando
+   `cane_total_mt`. Same-phase YoY:
+
+        Δ = (cane_total_mt[season, lev=1] − cane_total_mt[prior_season, lev=1])
+              / cane_total_mt[prior_season, lev=1] × 100
+
+   Source en log: `yoy_apertura_cane (vs YYYY/YY lev=1: NN.NNMt)`.
+
+3. **FALLBACK STABLE — todos los demás casos:**
+   - Tabla `conab_cana_levantamento` inaccesible (ImportError o SQLAlchemyError)
+   - `len(rows) < 1` — no hay levantamentos en DB
+   - `pub_date` del último es NULL
+   - Último levantamento > 130 días (§4 freshness)
+   - APERTURA pero `prior_season lev=1 cane_total_mt` no existe (bootstrap incompleto)
+   - `season` no parseable a formato `YYYY/YY`
+   - `yoy_cane_pct=NULL` en `lev != 1` (data anomaly: CONAB debería publicarlo)
+   - `cane_total_mt` NULL o cero
+
+##### 7.5.8.3 Por qué same-phase comparison (lev=1 vs lev=1)
+
+Cuando se debe derivar manual en la rama APERTURA, comparar contra `lev=1` de
+la zafra anterior (no `lev=4`). Razón:
 
 | Aspecto | lev=1 vs lev=4 ❌ | lev=1 vs lev=1 ✅ |
 |---------|------------------|-------------------|
 | Horizonte de forecast | Mezclado (pre-cosecha vs retrospectivo) | Idéntico (ambos pre-cosecha) |
-| Metodología CONAB | Distinta (forecast vs final observation) | Idéntica |
-| Fracción de zafra cosechada | 0% vs ~100% | 0% vs 0% |
-| Información capturada | Sesgo de revisión de zafra anterior | Shock macroeconómico real |
-| Estándar de industria | — | Wilmar, Cargill, Alvean usan este |
+| Metodología CONAB | Distinta | Idéntica |
+| Fracción cosechada al medir | 0% vs ~100% | 0% vs 0% |
+| Información capturada | Sesgo de revisión zafra anterior | Shock macroeconómico real |
+| Estándar de industria | — | Wilmar, Cargill, Alvean lo usan |
 
-**Implicación operacional:** durante el año (lev 2-3-4) el sistema mide el **pulso
-del mercado** (ajustes marginales mes a mes). En abril (lev=1) cambia automáticamente
-a medir el **shock macroeconómico anual** (clima 12 meses antes, área plantada,
-mandato etanol). Comportamiento bimodal documentado, no es un bug.
+##### 7.5.8.4 Threshold ±3% para caña
 
-##### 3. FALLBACK STABLE — todos los demás casos
+Mismo umbral que la versión anterior sugar-based, pero **más estricto en la
+práctica** porque la caña varía menos que el azúcar: el mix amplifica los
+swings de sugar mientras que cane refleja directamente la productividad
+agronómica del campo. ±3% sobre caña señaliza shocks reales (sequía, área
+plantada, mandato etanol que afecta motivación de plantar caña).
 
-Retorna `("STABLE", inferred=True)` con `logger.warning`. Casos:
+##### 7.5.8.5 Política no-raise
 
-  - Tabla `conab_cana_levantamento` inaccesible (ImportError o SQLAlchemyError)
-  - `len(rows) < 1` — no hay levantamentos en DB
-  - `pub_date` del último es NULL
-  - Último levantamento > 130 días (§4 freshness)
-  - APERTURA pero `prior_season lev=1` no existe en DB (bootstrap incompleto)
-  - `season` no parseable a formato `YYYY/YY` (`_prior_season` retorna None)
-  - `revision_sugar_pct=NULL` en `lev != 1` (anomalía de datos: CONAB **debe** emitir
-    revision en lev 2/3/4; si no está, los datos son sospechosos)
-  - `sugar_total_mt` NULL o cero
+Una falla en la inferencia CONAB nunca rompe el benchmark NDVI. Retorna
+`("STABLE", inferred=True)` con `logger.warning`. STABLE produce
+`market_signal = NEUTRAL` (matriz §7.5.5) — degradación elegante.
+Peor consecuencia: perder oportunidades. Nunca: falsas alarmas.
 
-**Threshold |Δ| ≥ 3%** para RECOVERY / DETERIORATION (estable bajo ese umbral). Aplica
-tanto a `revision_sugar_pct` como al delta YoY de apertura — ambos miden cambio
-porcentual de producción esperada y comparten umbral consistente.
+##### 7.5.8.6 ¿Y la dirección sugar? — Reservada para módulo separado (futuro)
 
-**Por qué la política de no-raise:** una falla en la inferencia CONAB no debe romper
-el benchmark NDVI entero. STABLE produce `market_signal = NEUTRAL` (ver matriz §7.5.5),
-que es la degradación elegante: el sistema reconoce que no tiene base para señal
-direccional pero sigue calculando el anomaly observable. Peor consecuencia: perder
-oportunidades. Nunca: generar falsas alarmas.
-
-**Auditoría:** el log incluye el `source` exacto utilizado:
-  - `revision_pct` — vía PRIMARY
-  - `yoy_apertura (vs YYYY/YY lev=1: NN.NNMt)` — vía APERTURA
-  - WARNING explícito con razón cuando fallback STABLE
+La métrica `yoy_sugar_pct` y `revision_sugar_pct` siguen siendo útiles, pero
+para una **comparación distinta**: paridad azúcar/etanol vs CEPEA, no validación
+de NDVI. Un módulo futuro (`_infer_conab_sugar_direction`) puede consumirlas
+para señales de **mix shift** específicamente. Cada métrica para su propósito.
 
 ---
 

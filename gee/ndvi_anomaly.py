@@ -501,12 +501,28 @@ def _save_cache(path: Path, data: dict) -> None:
     logger.debug("cache SAVED: %s", path.name)
 
 
-def _load_anomaly_history(country: str, region: str) -> list[float]:
+def _load_anomaly_history(
+    country: str, region: str,
+    *,
+    exclude_year: Optional[int] = None,
+    exclude_month: Optional[int] = None,
+) -> list[float]:
     """
     Lee history append-only para esta región.
     Retorna lista ordenada cronológicamente (antiguo → reciente), truncada a
     las últimas HISTORY_WINDOW_MONTHS observaciones (rolling window §7.5.4).
     Lista vacía si no hay history (primera corrida sin bootstrap).
+
+    Args:
+      exclude_year, exclude_month: si AMBOS se pasan, filtra la entrada que
+        coincida exactamente con (year, month) antes de truncar/devolver.
+        Diseñado para evitar self-inclusion bias en re-cómputo retrospectivo:
+        cuando compute_ndvi_anomaly() re-mide un mes que ya está en el history,
+        ese entry no debe participar en su propio percentile rank (sesgo ~4%
+        con N=24). Si se pasa solo uno, no se aplica filtro.
+
+    Para live production (current month nunca está en history): el filtro no
+    quita nada y el comportamiento es idéntico al previo.
     """
     path = _history_cache_path(country, region)
     if not path.exists():
@@ -520,6 +536,20 @@ def _load_anomaly_history(country: str, region: str) -> list[float]:
         )
         return []
     entries = data.get("anomalies", [])
+
+    # Self-inclusion exclusion (backtest mode, BUSINESS_LOGIC §7.5.6)
+    if exclude_year is not None and exclude_month is not None:
+        n_before = len(entries)
+        entries = [
+            e for e in entries
+            if not (e.get("year") == exclude_year and e.get("month") == exclude_month)
+        ]
+        if len(entries) < n_before:
+            logger.debug(
+                "history exclude_self: removed (%d, %d) for %s_%s",
+                exclude_year, exclude_month, country, region,
+            )
+
     # Ordenar cronológicamente (oldest → newest) y truncar a ventana deslizante
     sorted_entries = sorted(
         entries, key=lambda e: (e.get("year", 0), e.get("month", 0)),
@@ -677,34 +707,36 @@ def _prior_season(season: str) -> Optional[str]:
 
 def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
     """
-    Deduce dirección CONAB (RECOVERY/DETERIORATION/STABLE) leyendo los
-    levantamentos más recientes de conab_cana_levantamento.
+    Deduce dirección CONAB FIELD-level (RECOVERY/DETERIORATION/STABLE) usando
+    métricas de CAÑA — NO de azúcar.
 
-    Schema real (models/market_data.py:431):
+    Por qué CAÑA, no AZÚCAR (BUSINESS_LOGIC §7.5.8):
+      El satélite NDVI mide el CAMPO (lo que crece físicamente). El número
+      sugar_total_mt de CONAB es POST-MOLIENDA — incorpora la decisión
+      industrial del mix azúcar/etanol invisible al satélite. Cruzar NDVI
+      con dirección sugar-based contamina la señal: una caída del azúcar
+      por desvío a etanol generaría DIVERGENCE espurio. Anclamos a caña
+      (yoy_cane_pct / cane_total_mt), el único nivel físicamente comparable
+      con el NDVI.
+
+    Schema (models/market_data.py:431):
       season VARCHAR, levantamento INT, pub_date DATE,
-      sugar_total_mt NUMERIC, revision_sugar_pct NUMERIC.
+      yoy_cane_pct NUMERIC, cane_total_mt NUMERIC.
 
-    Lógica jerárquica (BUSINESS_LOGIC §7.5.8):
+    Lógica jerárquica:
 
-      1) PRIMARY — revision_sugar_pct presente:
-         Δ pre-computado por CONAB con metodología oficial. Se usa directo.
+      1) PRIMARY — yoy_cane_pct presente:
+         CONAB-published, FIELD-level, sin derivación. Threshold ±3%.
 
-      2) APERTURA DE ZAFRA — revision_sugar_pct=NULL y levantamento==1:
-         CONAB no emite revision en el primer levantamento de cada zafra
-         (no hay levantamento previo de la misma temporada). Comparar lev=1
-         vs lev=4 de la zafra anterior es phase-mixing (forecast pre-cosecha
-         vs cierre retrospectivo); las metodologías y confianza difieren.
-         Solución: YoY same-phase delta = compare lev=1 actual contra lev=1
-         de la zafra inmediatamente anterior. Same horizon, same method,
-         captura shock macroeconómico real.
+      2) APERTURA YoY CAÑA — lev=1 sin yoy_cane_pct (bootstrap incompleto):
+         Buscar lev=1 de prior_season. Si ambos cane_total_mt presentes,
+         derivar Δ% = (latest_cane − prior_cane) / prior_cane × 100.
+         Same-phase comparison (lev=1 vs lev=1). Mismo threshold ±3%.
 
       3) FALLBACK STABLE — todos los demás casos (DB error, datos NULL,
-         stale > 130d, lev != 1 con revision NULL, prior lev=1 no en DB).
+         stale > 130d, lev != 1 con yoy_cane_pct NULL, prior lev=1 missing).
 
-    Threshold |Δ| >= 3% para RECOVERY/DETERIORATION (estable bajo ese umbral).
-
-    Robustez: no lanza excepción. Retorna ("STABLE", True) en todos los
-    failure modes, loguendo WARNING con contexto. Ver §7.5.8 para detalles.
+    Robusto: nunca lanza excepción. STABLE+WARNING en todos los failure modes.
 
     Returns:
       (direction, inferred=True) donde direction ∈ VALID_CONAB_DIRECTIONS.
@@ -722,7 +754,7 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
         with SessionLocal() as session:
             rows = session.execute(text("""
                 SELECT season, levantamento, pub_date,
-                       sugar_total_mt, revision_sugar_pct
+                       yoy_cane_pct, cane_total_mt
                 FROM conab_cana_levantamento
                 ORDER BY pub_date DESC NULLS LAST
                 LIMIT 1
@@ -739,7 +771,7 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
         )
         return "STABLE", True
     latest = rows[0]
-    latest_season, latest_lev, latest_pub_date, latest_sugar, latest_revision = latest
+    latest_season, latest_lev, latest_pub_date, latest_yoy_cane, latest_cane = latest
     if latest_pub_date is None:
         logger.warning(
             "CONAB latest has no pub_date — fallback STABLE for %s", region,
@@ -754,11 +786,11 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
         )
         return "STABLE", True
 
-    # PRIMARY: revision_sugar_pct pre-computado por CONAB
-    if latest_revision is not None:
-        revision = float(latest_revision)
-        source = "revision_pct"
-    # APERTURA DE ZAFRA: lev=1 sin revision → YoY same-phase delta
+    # PRIMARY: yoy_cane_pct CONAB-published (FIELD-level, sin derivación)
+    if latest_yoy_cane is not None:
+        cane_yoy = float(latest_yoy_cane)
+        source = "yoy_cane_pct"
+    # APERTURA YoY CAÑA: lev=1 sin yoy_cane_pct → derivar de cane_total_mt
     elif int(latest_lev or 0) == 1:
         prior = _prior_season(latest_season)
         if prior is None:
@@ -770,7 +802,7 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
         try:
             with SessionLocal() as session:
                 prior_row = session.execute(text("""
-                    SELECT sugar_total_mt
+                    SELECT cane_total_mt
                     FROM conab_cana_levantamento
                     WHERE season = :ps AND levantamento = 1
                     LIMIT 1
@@ -783,36 +815,36 @@ def _infer_conab_direction(country: str, region: str) -> tuple[str, bool]:
             return "STABLE", True
         if prior_row is None or prior_row[0] is None:
             logger.warning(
-                "CONAB Apertura: prior season %s lev=1 not in DB — "
-                "fallback STABLE for %s", prior, region,
+                "CONAB Apertura: prior season %s lev=1 cane_total_mt not in DB"
+                " — fallback STABLE for %s", prior, region,
             )
             return "STABLE", True
-        prior_sugar = float(prior_row[0])
-        if prior_sugar == 0 or latest_sugar is None:
+        prior_cane = float(prior_row[0])
+        if prior_cane == 0 or latest_cane is None:
             logger.warning(
-                "CONAB Apertura: sugar_total_mt missing/zero — "
+                "CONAB Apertura: cane_total_mt missing/zero — "
                 "fallback STABLE for %s", region,
             )
             return "STABLE", True
-        revision = (float(latest_sugar) - prior_sugar) / prior_sugar * 100
-        source = f"yoy_apertura (vs {prior} lev=1: {prior_sugar:.2f}Mt)"
-    # ANOMALÍA: revision NULL en lev != 1 → no debería ocurrir, fallback STABLE
+        cane_yoy = (float(latest_cane) - prior_cane) / prior_cane * 100
+        source = f"yoy_apertura_cane (vs {prior} lev=1: {prior_cane:.2f}Mt)"
+    # ANOMALÍA: yoy_cane_pct NULL en lev != 1 → datos incompletos
     else:
         logger.warning(
-            "CONAB revision_pct=NULL on non-opening levantamento (lev=%s) — "
+            "CONAB yoy_cane_pct=NULL on non-opening levantamento (lev=%s) — "
             "data anomaly, fallback STABLE for %s", latest_lev, region,
         )
         return "STABLE", True
 
-    if revision >= 3.0:
+    if cane_yoy >= 3.0:
         direction = "RECOVERY"
-    elif revision <= -3.0:
+    elif cane_yoy <= -3.0:
         direction = "DETERIORATION"
     else:
         direction = "STABLE"
     logger.info(
-        "CONAB inference for %s: season=%s lev=%s Δ=%+.2f%% [%s] -> %s",
-        region, latest_season, latest_lev, revision, source, direction,
+        "CONAB inference for %s: season=%s lev=%s cane_Δ=%+.2f%% [%s] -> %s",
+        region, latest_season, latest_lev, cane_yoy, source, direction,
     )
     return direction, True
 
@@ -949,8 +981,13 @@ def compute_ndvi_anomaly(
         source="gee_ndvi_anomaly", field="anomaly_value",
     )
 
-    # 8. History → robust_stats (excluyendo current — todavía no appendado)
-    history = _load_anomaly_history(country, region)
+    # 8. History → robust_stats. Anti self-inclusion bias (§7.5.6):
+    # excluimos la entrada (year, month) si ya existe en history (re-cómputo
+    # retrospectivo). Para live production no quita nada (current month nunca
+    # está en history). Para shadow test/backtest, evita el ~4% bias.
+    history = _load_anomaly_history(
+        country, region, exclude_year=year, exclude_month=month,
+    )
     stats = robust_stats(history, anomaly)
 
     # 9. Append a history (después de stats: current no se incluye en su propio rank)
