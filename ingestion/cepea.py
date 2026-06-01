@@ -18,7 +18,7 @@ Frecuencia recomendada: diaria (scrape tras cierre del mercado de SP ~18h BRT).
 import logging
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import requests
@@ -92,23 +92,62 @@ def _parse_price(s: str) -> Optional[float]:
 
 
 def _parse_date(s: str) -> Optional[date]:
-    """Parsea MM/DD/YYYY (ethanol daily) o 'DD - MM/DD/YYYY' (weekly)."""
+    """
+    Parsea fechas CEPEA con guard anti-future + fallback DD/MM.
+
+    CEPEA /en/ documenta MM/DD/YYYY (formato americano). Pero existe ambigüedad
+    fundamental en fechas como "10/04/2026": puede ser Oct 4 (MM/DD US) o
+    10 abril (DD/MM brasileño). El parser legacy elegía siempre MM/DD,
+    contaminando la DB con fechas futuras cuando CEPEA publicaba DD/MM
+    inadvertidamente (caso real detectado: row hydrous_other con price_date
+    2026-10-04 vs today 2026-06-01).
+
+    Estrategia (preserva comportamiento histórico + previene contaminación):
+      1. Try %m/%d/%Y primero (legacy preference, formato CEPEA documentado)
+      2. Si la fecha resultante > today + 7d → suspicious → retry %d/%m/%Y
+      3. Si DD/MM también es futura o inválida → return None + WARNING
+      4. Si MM/DD es inválido (ej. mes 25) → fall through a DD/MM como antes
+
+    Backward compatibility: dates históricas válidas con MM/DD se mantienen
+    idénticas. SOLO cambia behavior cuando MM/DD produciría fecha futura.
+    Acepta tanto formato puro "MM/DD/YYYY" como prefijado "18 - MM/DD/YYYY".
+    """
     s = s.strip()
-    # Semanal: "18 - 05/22/2026"
     m = re.search(r"(\d{2}/\d{2}/\d{4})$", s)
-    if m:
-        try:
-            return datetime.strptime(m.group(1), "%m/%d/%Y").date()
-        except ValueError:
-            pass
-    # Semanal formato DD/MM/YYYY: "22/05/2026"
-    m2 = re.search(r"(\d{2}/\d{2}/\d{4})$", s)
-    if m2:
-        for fmt in ("%m/%d/%Y", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(m2.group(1), fmt).date()
-            except ValueError:
-                continue
+    if not m:
+        return None
+    raw = m.group(1)
+    threshold = date.today() + timedelta(days=7)
+
+    # 1. Try MM/DD/YYYY (legacy preference)
+    try:
+        parsed = datetime.strptime(raw, "%m/%d/%Y").date()
+        if parsed <= threshold:
+            return parsed
+        # Future date detected → suspicious, retry DD/MM
+        logger.warning(
+            "cepea._parse_date: MM/DD interpretation %r=%s is future "
+            "(>today+7d), retrying DD/MM", raw, parsed.isoformat(),
+        )
+    except ValueError:
+        # MM/DD inválido (ej. mes > 12) → fall through a DD/MM
+        pass
+
+    # 2. Try DD/MM/YYYY (Brazilian format fallback)
+    try:
+        parsed = datetime.strptime(raw, "%d/%m/%Y").date()
+        if parsed <= threshold:
+            return parsed
+        logger.warning(
+            "cepea._parse_date: DD/MM interpretation %r=%s also future, "
+            "rejecting", raw, parsed.isoformat(),
+        )
+    except ValueError:
+        pass
+
+    logger.warning(
+        "cepea._parse_date: cannot parse %r as valid past/recent date", raw,
+    )
     return None
 
 
