@@ -278,6 +278,13 @@ preserva la señal estacional.
 agronómico pre-2020 (prácticas de mecanización distintas en Centro-Sur). Decisión
 revisable cada 3-5 años.
 
+**Anti-leakage del target year:** Para `target_year=Y`, el baseline son los 5 años
+**previos a Y** (Y−5 a Y−1), NO los 5 años hasta el año actual. Sin esta exclusión,
+el year siendo evaluado contribuiría a su propio baseline con peso 1/5 = 20%,
+sesgando el anomaly hacia zero. Implementado vía param `target_year` en
+`_compute_baseline` (default = `datetime.now().year` para preservar live production
+behavior). Crítico para bootstrap retrospectivo y shadow tests.
+
 #### 7.5.3 Coverage Gates Tiered (`_validate_coverage_gate`)
 
 **Per-pixel current month:**

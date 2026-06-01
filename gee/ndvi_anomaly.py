@@ -582,9 +582,23 @@ def _append_anomaly_to_history(country: str, region: str,
     )
 
 
-def _compute_baseline(country: str, region: str, month: int) -> dict:
+def _compute_baseline(country: str, region: str, month: int,
+                     target_year: Optional[int] = None) -> dict:
     """
     Orquesta cache lookup → cómputo GEE (si miss) → save cache.
+
+    Args:
+      target_year: año contra el cual se mide el anomaly. El baseline = los 5 años
+                  PREVIOS a target_year (excluyente). Default: año actual.
+
+                  CRÍTICO para evitar data leakage en backtesting/bootstrap:
+                  si computamos anomaly para year=2024, el baseline debe ser
+                  2019-2023 (no 2021-2025). Sin este parámetro, target_year
+                  estaría incluido en su propio baseline (bias hacia zero).
+                  Ver BUSINESS_LOGIC §7.5.2.
+
+                  Para live production (target = current year), comportamiento
+                  idéntico al previo: baseline = current_year-5 a current_year-1.
 
     Returns dict con baseline_ndvi + historical_coverage_pct + metadata.
 
@@ -595,9 +609,9 @@ def _compute_baseline(country: str, region: str, month: int) -> dict:
     aportaron datos. Trade-off: más rápido (1 reduce vs 5), aceptable para
     Fase 1; refinable post shadow test (Step F) si se observan divergencias.
     """
-    current_year = datetime.now().year
-    year_start = current_year - BASELINE_YEARS_WINDOW
-    year_end   = current_year - 1
+    anchor_year = target_year if target_year is not None else datetime.now().year
+    year_start = anchor_year - BASELINE_YEARS_WINDOW
+    year_end   = anchor_year - 1
     path = _baseline_cache_path(country, region, month, year_start, year_end)
     cached = _load_cache(path, BASELINE_TTL_DAYS)
     if cached is not None:
@@ -890,8 +904,9 @@ def compute_ndvi_anomaly(
 
     warnings_acc: list[str] = []
 
-    # 2. Baseline 5yr (cache TTL 180d)
-    baseline = _compute_baseline(country, region, month)
+    # 2. Baseline 5yr (cache TTL 180d) — target_year explícito para evitar
+    # data leakage en backtesting (BUSINESS_LOGIC §7.5.2)
+    baseline = _compute_baseline(country, region, month, target_year=year)
     baseline_ndvi = baseline.get("baseline_ndvi")
     historical_coverage = float(baseline.get("historical_coverage_pct") or 0.0)
 

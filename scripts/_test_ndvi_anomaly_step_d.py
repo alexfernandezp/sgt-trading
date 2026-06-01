@@ -58,9 +58,10 @@ def setup_mocks(*,
         "_compute_current":        nda._compute_current,
         "_infer_conab_direction":  nda._infer_conab_direction,
     }
-    nda._compute_baseline = lambda c, r, m: {
+    nda._compute_baseline = lambda c, r, m, target_year=None: {
         "country": c, "region": r, "month": m,
-        "baseline_start_year": 2021, "baseline_end_year": 2025,
+        "baseline_start_year": (target_year or 2026) - 5,
+        "baseline_end_year":   (target_year or 2026) - 1,
         "baseline_ndvi": baseline_ndvi,
         "historical_coverage_pct": baseline_coverage,
         "valid_pixel_count": int(2000 * baseline_coverage),
