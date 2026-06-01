@@ -91,6 +91,7 @@ suficiente para rechazar errores obvios (precios negativos, NDVI = 1.8).
 | Métrica | Rango válido | Justificación |
 |---------|--------------|---------------|
 | NDVI | `[-1.0, 1.0]` | Definición física estricta. Para crops cultivados: típicamente [0.2, 0.9] |
+| **NDVI anomaly (current − 5yr climatología)** | `[-0.5, +0.5]` | Realista ±0.3 en regiones cultivadas. Cap ±0.5 absorbe eventos extremos (sequía severa o recuperación pos-quema). Anomaly fuera de ±0.5 ⇒ probable bug en geometry o cobertura insuficiente del baseline |
 | LST (Land Surface Temp) | `[273.15, 333.15]` Kelvin | 0°C a 60°C. India/Brasil bands sugar dentro de esto |
 | SPI-3, SPI-90 | `[-4.0, 4.0]` | Standardized Precipitation Index, definición estadística |
 
@@ -137,6 +138,8 @@ una señal, el caller debe degradar o abortar (no usar dato stale silenciosament
 | USDA PSD | Trimestral | 130 | Latencia mayor |
 | CONAB cana levantamento | 4× al año | 130 | abril/agosto/diciembre/marzo |
 | NDVI Sentinel-2 | ~10 días por revisita | 21 | Tolerancia cloud cover |
+| **NDVI anomaly baseline (5yr cache)** | Por región-mes | 180 | Climatología rota ventana 5yr ~1×/año. Cache hit rate esperado >99% en producción (ver §7.5.4) |
+| **NDVI anomaly current month (cache)** | Mensual | 7 | Sentinel-2 revisita ~5d; refresh semanal captura nuevas pasadas sin quemar quota GEE |
 | GEE LST/SPI | Continua | 14 | Cómputo on-demand |
 | OCSB Thailand | Trimestral | 130 | Latencia oficial |
 | ISMA India | Mensual durante crush | 60 | Off-season: 180 |
@@ -229,6 +232,143 @@ freshness fallida:
   Justificación: 2026-05-28 análisis post-mortem India 2024, descubrió que SPI estaba
   midiendo monzón equivocado; recalibración usando gross alinea con metodología ISMA.
 
+### 7.5 NDVI Temporal Anomaly Method (`gee/ndvi_anomaly.py`)
+
+Implementado 2026-06-01. Capacidad para validar reportes direccionales CONAB (RECOVERY /
+DETERIORATION / STABLE) contra observación satelital independiente. El sistema NO sustituye
+a CONAB; lo audita y detecta divergencias (alpha-generating).
+
+#### 7.5.1 ¿Por qué este método?
+
+CONAB publica 4 levantamentos/año revisando producción esperada. Auditorías retrospectivas
+(2018-2024) muestran que la magnitud de revisión entre el levantamento 1 y el 4 oscila
+entre ±5% y ±15% en años de stress climático. Sin un benchmark observacional independiente,
+el sistema no puede distinguir entre:
+
+  - Revisiones agronómicas legítimas (cosecha real más alta/baja de lo esperado)
+  - Ajustes de política (CONAB suaviza revisiones por presión institucional)
+  - Errores metodológicos arrastrados de levantamentos previos
+
+Satellite NDVI es **observado pre-revisión** y CONAB no puede backfillearlo. Cualquier
+divergencia ≥ 1.5σ (modified Z) entre la dirección reportada y la observada se trata como
+información asimétrica: el mercado de futuros reacciona al reporte CONAB el día de
+publicación, pero la realidad satelital ya estaba presente en los datos crudos semanas
+antes.
+
+#### 7.5.2 Climatología Calendar-Aware
+
+Baseline para mes calendario T (1..12) en región S:
+
+    baseline_S(T) = median{ NDVI_S(y, T) : y ∈ [Y-5, Y-1] }
+
+**Mediana, no media:** El NDVI agregado por región contiene outliers crónicos por nubes
+mal filtradas (la SCL mask de Sentinel-2 deja artefactos en bordes de nubes y sombras).
+La media se contamina con estos píxeles falsamente bajos; la mediana es invariante a
+hasta el 50% de outliers (breakdown point 0.5). Coste computacional idéntico server-side
+en GEE (`.median()` vs `.mean()` sobre la misma ImageCollection).
+
+**Calendar-aware (no rolling 60-meses):** La fenología del azúcar de caña tiene
+seasonalidad fuerte (siembra Sep-Nov, crecimiento Dec-May, cosecha Apr-Nov según región).
+Comparar NDVI de Junio contra un rolling de los últimos 60 meses mezcla fases fenológicas
+distintas y destruye la información. Comparar Junio contra mediana de Junios pasados
+preserva la señal estacional.
+
+**Ventana 5 años:** Compromise entre estabilidad estadística y relevancia agronómica.
+<5 años: varianza climática insuficiente para baseline estable. >5 años: incluye régimen
+agronómico pre-2020 (prácticas de mecanización distintas en Centro-Sur). Decisión
+revisable cada 3-5 años.
+
+#### 7.5.3 Coverage Gates Tiered (`_validate_coverage_gate`)
+
+**Per-pixel current month:**
+
+  - `coverage < 30%` → `DataQualityError` crítico. Razón: con <30% píxeles válidos el
+    intervalo de confianza del mean estimator (±1.96·σ/√N) excede la magnitud típica de
+    la anomalía (±0.05 NDVI vs anomaly esperada ±0.03). Signal-to-noise ratio < 1, la
+    señal es indistinguible del ruido.
+  - `30% ≤ coverage < 50%` → `logger.warning`, señal computada pero flagged como
+    `degraded`. La conviction queda artificialmente baja por varianza inducida por la
+    cobertura, no por la anomalía real. Útil para auditoría pero no para trading directo.
+  - `coverage ≥ 50%` → `logger.info`, gate silencioso. Cobertura típica Sentinel-2 en
+    cerrado brasileño: 60-80%.
+
+**Historical 60-month coverage** (`validate_count` reusado de `data_quality.py`):
+
+  - Umbral 80% (48 de 60 meses con cobertura ≥ `MIN_PIXEL_COV_PER_MONTH = 0.30`). Razón:
+    con N=48 observaciones el CI de la mediana muestral ≈ ±1.25σ/√N ≈ ±0.18σ; con N=30
+    escala a ±0.23σ, comparable a la magnitud típica de anomalía. Por debajo de N=48 el
+    baseline pierde poder discriminatorio entre régimen normal y stress.
+
+#### 7.5.4 Cache Strategy (Two-Tier)
+
+Dos tiers porque los datos tienen ciclos de vida ortogonales:
+
+| Tier | TTL | Justificación de ingeniería |
+|------|-----|------------------------------|
+| Baseline (climatología 5yr) | 180 días | El baseline solo cambia cuando rotamos la ventana 5yr (~1×/año). Coste: 60 server-side reductions × 5 regiones × 12 meses = ~720 ops por bootstrap completo. Cache hit rate esperado >99% en producción |
+| Current month NDVI | 7 días | Sentinel-2 revisita ~5d. Refresh semanal captura nuevas pasadas sin quemar quota GEE. TTL más corto = sobrecoste sin ganancia informativa |
+
+**Schema versioning:** El sufijo `_v{CACHE_SCHEMA_VERSION}` en filename permite invalidación
+atómica si cambiamos formato del JSON. Bumping la versión hace que ningún archivo viejo
+coincida con el nuevo path → recomputo forzado sin migración explícita.
+
+**Append-only history JSON:** Deduplicación por `(year, month)` permite re-cómputo
+idempotente. Atomic write (`.tmp` → `rename`) garantiza que un crash mid-write no corrompe
+el archivo de history.
+
+**Rolling history window:** `_load_anomaly_history` retorna las últimas
+`HISTORY_WINDOW_MONTHS = 24` observaciones (no all-time). 24 meses cubren 2 zafras
+brasileñas completas (Abril-Marzo), suficiente para que `robust_stats` produzca percentile
+estable. Si la historia tiene <24 entries, retorna lo disponible y `robust_stats` decide
+si declarar `INSUFFICIENT_DATA` (umbral interno: n<10).
+
+#### 7.5.5 Matriz de Clasificación Market Signal
+
+Función `_classify_market_signal(percentile, conab_direction)`:
+
+| Percentile NDVI | CONAB direction | Market Signal | Interpretación |
+|-----------------|-----------------|---------------|----------------|
+| `P ≥ 70` | `RECOVERY` | `CONFIRMATION` | Satellite valida recuperación reportada |
+| `P ≤ 30` | `DETERIORATION` | `CONFIRMATION` | Satellite valida deterioro reportado |
+| `P ≤ 30` | `RECOVERY` | `DIVERGENCE_BEARISH` | CONAB optimista; satellite contradice → alpha bajista |
+| `P ≥ 70` | `DETERIORATION` | `DIVERGENCE_BULLISH` | CONAB pesimista; satellite contradice → alpha alcista |
+| `30 < P < 70` | cualquiera | `NEUTRAL` | Anomalía en rango ordinario, sin convicción |
+| cualquiera | `STABLE` | `NEUTRAL` | Sin señal direccional CONAB que comparar |
+| `None` | cualquiera | `NEUTRAL` | Bootstrap incompleto / insufficient history |
+
+**Umbrales 70/30 — racional:**
+  - Más permisivo (e.g. 60/40): genera muchas señales pero la mayoría son ruido
+    (modified_z típico ±0.5, no accionable bajo el AND gate de `robust_stats`).
+  - Más estricto (e.g. 80/20): mejora marginalmente la correlación con futures returns
+    pero pierde demasiadas oportunidades.
+  - Decisión revisable tras shadow test contra CONAB 2024-2025 (Step F del plan).
+
+#### 7.5.6 Bootstrap Inicial
+
+Primera corrida sin historial → `robust_stats` retorna `INSUFFICIENT_DATA` → `conviction
+= "INSUFFICIENT_DATA"` → señal no accionable. Solución: script
+`scripts/bootstrap_ndvi_anomaly_history.py` (a crear en Step E) que computa
+retroactivamente 24 meses de anomalías por región.
+
+  - 24 meses = 2 zafras completas brasileñas (Abril-Marzo)
+  - 5 regiones × 24 meses = 120 cómputos GEE, ~3-5 minutos one-shot
+  - Idempotente: re-ejecución produce los mismos datos (climatología y NDVI mensual son
+    determinísticos modulo updates en S2 reprocessing)
+  - Orden: ejecutar tras Step E (smoke test exitoso) antes de Step F (shadow test)
+
+#### 7.5.7 Audit Logging
+
+Formato estandarizado (cumple BUSINESS_LOGIC §5):
+
+```
+INFO     gee.ndvi_anomaly | Benchmark GEE vs CONAB | Region=BR_SP | Percentile=78.0 | mZ=+2.15
+INFO     gee.ndvi_anomaly | -> Market Confirmation | direction=RECOVERY, P=78 ≥ 70
+WARNING  gee.ndvi_anomaly | -> Market DIVERGENCE_BEARISH | CONAB=RECOVERY, satellite P=23 (below baseline)
+```
+
+`CONFIRMATION` se loguea a **INFO** (evento esperado, ruido bajo). `DIVERGENCE_*` se loguea
+a **WARNING** (señal alpha, debe llegar a sistemas de alertas).
+
 ---
 
 ## 8. Lo que NO está en este documento (aún)
@@ -238,3 +378,57 @@ A medida que se refactoricen los siguientes módulos en Fases 2-4, añadir secci
 - World Balance Model: lógica de STU%, weight drift, country balance
 - Entry Zone Logic: Fibonacci, swing, VWAP bands
 - Macro Signals: las 20+ señales y sus dependencias de datos
+
+---
+
+## 9. Quick Reference: Market Signal Matrix (NDVI vs CONAB)
+
+> _Referencia rápida — la lógica completa con justificaciones está en §7.5._
+
+**Inputs:**
+  - `Percentile`: ranking del anomaly NDVI actual sobre el rolling history (24 meses, ver §7.5.4)
+  - `CONAB direction`: dirección del último reporte CONAB (inferida automáticamente desde
+    `conab_cana_levantamento`, o pasada explícita por el caller)
+
+**Output:** `market_signal` ∈ {`CONFIRMATION`, `DIVERGENCE_BULLISH`, `DIVERGENCE_BEARISH`, `NEUTRAL`}
+
+```
+                            ┌────────────────────────────────────────────────────────────┐
+                            │                      CONAB direction                       │
+                            ├──────────────────┬──────────────────┬─────────────────────┤
+                            │     RECOVERY     │  DETERIORATION   │       STABLE        │
+┌──────────────┬────────────┼──────────────────┼──────────────────┼─────────────────────┤
+│   Percentile │   P ≥ 70   │  CONFIRMATION    │  DIVERGENCE_BULL │     NEUTRAL         │
+│   NDVI       │ 30 < P <70 │  NEUTRAL         │  NEUTRAL         │     NEUTRAL         │
+│   anomaly    │   P ≤ 30   │  DIVERGENCE_BEAR │  CONFIRMATION    │     NEUTRAL         │
+│              │   None     │  NEUTRAL         │  NEUTRAL         │     NEUTRAL         │
+└──────────────┴────────────┴──────────────────┴──────────────────┴─────────────────────┘
+```
+
+**Acciones por signal:**
+
+| Signal | Severidad log | Acción |
+|--------|--------------|--------|
+| `CONFIRMATION` | `INFO` | Validación; sin trade direccional adicional |
+| `DIVERGENCE_BULLISH` | `WARNING` | Alpha alcista: CONAB pesimista pero satélite alcista. Llegar a sistema de alertas |
+| `DIVERGENCE_BEARISH` | `WARNING` | Alpha bajista: CONAB optimista pero satélite contradice |
+| `NEUTRAL` | `INFO` | No accionable. Sin convicción direccional |
+
+**Gates de calidad antes de aceptar la señal:**
+
+  1. `pixel_coverage_pct ≥ 30%` (per-pixel mes actual) — si no, `DataQualityError` crítico
+  2. `historical_coverage_pct ≥ 80%` (60-month baseline) — si no, `DataQualityError`
+  3. `n_historical_obs ≥ 10` para que `robust_stats` no devuelva `INSUFFICIENT_DATA`
+  4. `|anomaly_value| ≤ 0.5` — si no, probable bug en geometry o cobertura
+
+**Umbrales actuales** (revisables tras shadow test del Step F):
+
+| Constante | Valor | Donde está |
+|-----------|-------|-----------|
+| `PERCENTILE_HIGH` | 70.0 | `gee/ndvi_anomaly.py` |
+| `PERCENTILE_LOW` | 30.0 | `gee/ndvi_anomaly.py` |
+| `COVERAGE_CRITICAL_THRESHOLD` | 0.30 | `gee/ndvi_anomaly.py` |
+| `COVERAGE_WARNING_THRESHOLD` | 0.50 | `gee/ndvi_anomaly.py` |
+| `MIN_HISTORICAL_COVERAGE` | 0.80 | `gee/ndvi_anomaly.py` |
+| `BASELINE_YEARS_WINDOW` | 5 | `gee/ndvi_anomaly.py` |
+| `HISTORY_WINDOW_MONTHS` | 24 | `gee/ndvi_anomaly.py` |
