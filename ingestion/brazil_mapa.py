@@ -18,7 +18,8 @@ import logging
 import re
 import time
 from datetime import date, datetime
-from typing import Optional
+from email.utils import parsedate_to_datetime
+from typing import Mapping, Optional
 
 import requests
 import xlrd
@@ -37,11 +38,20 @@ from services.data_quality import (
 
 logger = logging.getLogger(__name__)
 
-# BUSINESS_LOGIC §3.2 — rangos validos por campo MAPA quincenal nacional.
-MAPA_RANGE_CANE_T        = (0,    100_000_000)   # pico CS ~50 Mt/quincena
-MAPA_RANGE_SUGAR_T       = (0,    5_000_000)     # pico ~3 Mt/quincena
-MAPA_RANGE_ETHANOL_M3    = (0,    5_000_000)     # pico ~2.5 Mm3/quincena
-MAPA_RANGE_SUGAR_MIX_PCT = (20.0, 60.0)          # mix Brasil tipico 35-50%
+# BUSINESS_LOGIC §3.2.A — rangos para columnas *_cumulative (acumulado de safra).
+# Aplicados write-side en _parse_xls (lo que MAPA emite literalmente en el XLS).
+MAPA_RANGE_CANE_CUMULATIVE_T     = (0,    700_000_000)   # cierre safra ~600-650 Mt
+MAPA_RANGE_SUGAR_CUMULATIVE_T    = (0,     45_000_000)   # cierre safra ~35-40 Mt
+MAPA_RANGE_ETHANOL_CUMULATIVE_M3 = (0,     45_000_000)   # idem (mix decision)
+
+# BUSINESS_LOGIC §3.2.B — rangos para columnas *_net (delta quincenal).
+# Aplicados derive-side en P3.E.7 (al recomputar los netos con datos limpios).
+MAPA_RANGE_CANE_NET_T            = (0,    100_000_000)   # pico CS ~50 Mt/quincena
+MAPA_RANGE_SUGAR_NET_T           = (0,      5_000_000)   # pico ~3 Mt/quincena
+MAPA_RANGE_ETHANOL_NET_M3        = (0,      5_000_000)   # pico ~2.5 Mm3/quincena
+
+# BUSINESS_LOGIC §3.2.C — sugar_mix_pct se deriva de net values (post P3.E.7).
+MAPA_RANGE_SUGAR_MIX_PCT         = (20.0, 60.0)          # mix Brasil tipico 35-50%
 
 # BUSINESS_LOGIC §4 — MAPA quinzenal, max_age=35d (2 quincenas de margen).
 MAPA_MAX_AGE_DAYS = 35
@@ -143,15 +153,28 @@ def _discover_xls_urls(season_url: str) -> list[str]:
 
 def _parse_date_from_url(url: str, harvest_year: str) -> Optional[date]:
     """
-    Infiere la fecha de referencia de la quincena a partir del nombre del archivo.
-    Patrones:
+    Infiere la fecha de la QUINCENA reportada (`report_date`) a partir del
+    nombre del archivo MAPA.
+
+    Patrones soportados:
       Acompanhamentodaproduo2526_010526.xls       → DDMMYY
       Acompanhamentodaproduo2526_160425_2.xls     → DDMMYY con sufijo revision _N
       Acompanhamentodaproducao_2526_160126.xls    → idem
+
+    IMPORTANTE (P3.E.3): El strip interno `re.sub(r"_\\d{1,2}$", "")` es un
+    DETALLE LOCAL de parsing de fecha: la fecha esta ANTES del `_N` en el
+    filename, y necesitamos quitarlo para que el regex de fecha matchee. NO
+    es un "colapso" de informacion — la secuencia de revision se preserva
+    SIEMPRE via `_parse_revision_seq(filename)` (sibling function), y el
+    pipeline (P3.E.4) inserta cada revision como fila nueva con su propio
+    `report_issue_date` en lugar de saltarsela como hacia el UPSERT legacy.
+
+    Ver tambien BUSINESS_LOGIC §3.2 y §4.1 para la semantica PIT completa.
     """
     fname = url.split("/")[-1].replace(".xls", "").replace(".xlsx", "")
 
-    # Limpiar sufijo de revision: _1, _2, _3, etc. al final del nombre
+    # Strip local: la fecha esta antes del sufijo _N. La info de revision
+    # se preserva via _parse_revision_seq, no se pierde aqui.
     fname_clean = re.sub(r"_\d{1,2}$", "", fname)
 
     def _try_parse(s):
@@ -204,6 +227,113 @@ def _valid_season(key: str) -> bool:
             "brazil_mapa._valid_season", f"key={key}", e,
         )
         return False
+
+
+# ---------------------------------------------------------------------------
+# P3.E.2 — PIT issue date + revision sequence
+# ---------------------------------------------------------------------------
+
+# Regex para detectar sufijo _N de revision al final del filename (antes de
+# la extension). Convencion MAPA: foo_010526.xls = revision 1 (sin sufijo);
+# foo_010526_2.xls = revision 2; etc. El _N indica edicion sucesiva del MISMO
+# reporte de la misma quincena, no del ano cosecha.
+_REVISION_SUFFIX_RE = re.compile(
+    r"_(\d{1,2})(?:\.(?:xls|xlsx))?$", re.IGNORECASE,
+)
+
+
+def _parse_revision_seq(filename: str) -> int:
+    """
+    Extrae el sufijo `_N` del filename MAPA como secuencia de revision.
+
+    Convencion:
+      Acompanhamentodaproduo2526_010526.xls       → 1 (sin sufijo)
+      Acompanhamentodaproduo2526_010526_2.xls     → 2 (primera revision)
+      Acompanhamentodaproduo2526_010526_2.xlsx    → 2
+      Acompanhamentodaproduo2526_010526_3.xls     → 3 (rara)
+
+    P3.E.3: Esta funcion REEMPLAZA conceptualmente el `re.sub(r"_\\d{1,2}$", "")`
+    que colapsaba el sufijo en `_parse_date_from_url`. El strip sigue dentro de
+    `_parse_date_from_url` como detalle local de parsing de FECHA (la fecha
+    esta ANTES del `_N` en el filename), pero la informacion de revision queda
+    preservada via esta sibling function — el pipeline orquesta revisiones en
+    lugar de saltarselas.
+    """
+    if not filename:
+        return 1
+    m = _REVISION_SUFFIX_RE.search(filename)
+    if not m:
+        return 1
+    try:
+        return int(m.group(1))
+    except (ValueError, TypeError) as e:
+        parse_log_warning(
+            "brazil_mapa._parse_revision_seq", filename, e,
+        )
+        return 1
+
+
+def _extract_issue_date(
+    response_headers: Optional[Mapping[str, str]],
+    filename: str,
+    *,
+    reference_today: Optional[date] = None,
+) -> tuple[date, int]:
+    """
+    Extrae (report_issue_date, report_revision_seq) para una descarga MAPA.
+
+    Jerarquia de confianza para report_issue_date (§4.1 + P3.E.2 design):
+      1. Header HTTP `Last-Modified` (RFC 7231, parsed via email.utils
+         .parsedate_to_datetime → date). Fuente primaria, alta fiabilidad.
+      2. Fallback: date.today() + WARNING via parse_log_warning. La WARN
+         senaliza al operador que MAPA cambio el servidor o que el proxy
+         capa el header — situacion que debe investigarse.
+
+    report_revision_seq siempre se extrae del sufijo `_N` del filename
+    (default 1 si no hay sufijo). Es independiente del issue_date: dos
+    revisiones (_2, _3) pueden tener distintos Last-Modified.
+
+    Args:
+      response_headers — dict/Mapping de cabeceras HTTP (case-insensitive
+                          usualmente, pero accedemos al exact "Last-Modified").
+                          None se trata como "header ausente" → fallback.
+      filename         — nombre base del archivo descargado (para extraer _N
+                          y para audit log).
+      reference_today  — fecha de referencia para el fallback (default
+                          date.today()). Inyectable para testing.
+
+    Returns:
+      (issue_date, revision_seq)
+    """
+    ref = reference_today or date.today()
+    headers = response_headers or {}
+
+    last_modified_raw = headers.get("Last-Modified") or headers.get("last-modified")
+
+    issue_date: Optional[date] = None
+    if last_modified_raw:
+        try:
+            dt = parsedate_to_datetime(last_modified_raw)
+            if dt is not None:
+                issue_date = dt.date()
+        except (TypeError, ValueError) as e:
+            parse_log_warning(
+                "brazil_mapa._extract_issue_date.last_modified",
+                f"raw={last_modified_raw!r} filename={filename}", e,
+            )
+
+    if issue_date is None:
+        # Fallback explicito con WARN — el operador debe ver esto en el log.
+        parse_log_warning(
+            "brazil_mapa._extract_issue_date",
+            f"Missing Last-Modified header, falling back to today "
+            f"(filename={filename})",
+            ValueError("missing or invalid Last-Modified header"),
+        )
+        issue_date = ref
+
+    revision_seq = _parse_revision_seq(filename)
+    return issue_date, revision_seq
 
 
 def _fortnight_seq(ref_date: date, harvest_year: str) -> int:
@@ -418,15 +548,17 @@ def _parse_xls(content: bytes, url: str, harvest_year: str) -> Optional[dict]:
         total_prod     = sugar + etanol_equiv_t
         sugar_mix      = round(sugar / total_prod * 100, 3) if total_prod > 0 else None
 
-    # P3.B — Range gates §3.2. Si cualquier campo cae fuera de rango,
-    # el parser leyo una columna equivocada (offset XLS roto) → discard total.
-    # cane y sugar tienen allow_none=False porque cane=None ya bloqueo arriba.
-    # ethanol_total y sugar_mix permiten None (etanol opcional, mix derivado).
+    # P3.B + P3.E.2 — Range gates §3.2.A (CUMULATIVE). _parse_xls extrae los
+    # valores acumulados del XLS MAPA; los netos se derivan downstream (P3.E.7).
+    # Si cualquier campo cae fuera de rango cumulative → discard total: el
+    # parser leyo una columna equivocada (offset XLS roto). cane y sugar tienen
+    # allow_none=False porque cane=None ya bloqueo arriba. ethanol_total y
+    # sugar_mix permiten None (etanol opcional, mix derivado).
     field_checks = [
-        (cane,         "cane_crushed_t",   MAPA_RANGE_CANE_T,        False),
-        (sugar,        "sugar_t",          MAPA_RANGE_SUGAR_T,       True),
-        (etanol_total, "ethanol_total_m3", MAPA_RANGE_ETHANOL_M3,    True),
-        (sugar_mix,    "sugar_mix_pct",    MAPA_RANGE_SUGAR_MIX_PCT, True),
+        (cane,         "cane_crushed_t_cumulative",   MAPA_RANGE_CANE_CUMULATIVE_T,    False),
+        (sugar,        "sugar_t_cumulative",          MAPA_RANGE_SUGAR_CUMULATIVE_T,   True),
+        (etanol_total, "ethanol_total_m3_cumulative", MAPA_RANGE_ETHANOL_CUMULATIVE_M3, True),
+        (sugar_mix,    "sugar_mix_pct",               MAPA_RANGE_SUGAR_MIX_PCT,        True),
     ]
     for value, field, (vmin, vmax), allow_none in field_checks:
         _, ok = check_or_log(

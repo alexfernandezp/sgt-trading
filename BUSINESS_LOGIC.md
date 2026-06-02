@@ -61,23 +61,56 @@ suficiente para rechazar errores obvios (precios negativos, NDVI = 1.8).
 
 ### 3.2 Producción Brasil (MAPA, quincenal)
 
+Tras la migración PIT (P3.E.1, commit `4b57e0a`), la tabla `brazil_production`
+almacena **dos series numéricas paralelas** por cada métrica:
+
+- **`*_cumulative`** — materia prima exacta del XLS MAPA (acumulado de safra a
+  cierre de cada quincena). Es lo que MAPA reporta literalmente.
+- **`*_net`** — delta quincenal derivado (`cumulative[N] − cumulative[N−1]`
+  dentro de la misma `harvest_year`). Se rellena en P3.E.7 con flujo PIT
+  limpio. Es la métrica accionable para señales (lo que "pasó esta quincena").
+
+Los rangos **dependen de cuál de las dos series se valida**.
+
+#### 3.2.A Rangos `*_cumulative` (acumulado de safra)
+
 | Campo | Rango válido | Justificación |
 |-------|--------------|---------------|
-| `cane_crushed_t` por quincena nacional | `[0, 100_000_000]` t | Pico Centro-Sur: ~50 Mt/quincena. Cap 2× |
-| `sugar_t` por quincena | `[0, 5_000_000]` t | Pico: ~3 Mt/quincena |
-| `ethanol_total_m3` | `[0, 5_000_000]` m³ | Pico: ~2.5 Mm³/quincena |
-| `sugar_mix_pct` | `[20.0, 60.0]` % | Mix típico Brasil: 35-50%. Fuera de [20, 60] = error de parser |
+| `cane_crushed_t_cumulative` | `[0, 700_000_000]` t | Brasil CS cierre safra ~600-650 Mt; cap 2026 ~700 Mt. Histórico legacy DB max 663M |
+| `sugar_t_cumulative` | `[0, 45_000_000]` t | Brasil CS cierre safra ~35-40 Mt; cap 45 Mt |
+| `ethanol_anhydrous_m3_cumulative` | `[0, 45_000_000]` m³ | Misma escala que sugar (mix decisión) |
+| `ethanol_hydrated_m3_cumulative` | `[0, 45_000_000]` m³ | Idem |
+| `ethanol_total_m3_cumulative` | `[0, 45_000_000]` m³ | Σ anhídrico + hidratado |
 
-#### 3.2.1 Aplicación en `_parse_xls` y validador estructural
+#### 3.2.B Rangos `*_net` (delta por quincena)
 
-Los rangos §3.2 se aplican **en `ingestion/brazil_mapa._parse_xls`**, justo
-antes del `return`. Si cualquier campo (`cane_crushed_t`, `sugar_t`,
-`ethanol_total_m3`, `sugar_mix_pct`) cae fuera de rango → **fila descartada
-completa + WARNING**. Justificación: MAPA publica XLS con columnas variables
-entre temporadas; si el parser detecta una columna "Cana" desfasada,
-extraerá un valor que (por escala) cae claramente fuera de rango. Mejor
-descartar la fila que insertar `cane = 200_000_000_000` corrompiendo el
-scoring downstream.
+| Campo | Rango válido | Justificación |
+|-------|--------------|---------------|
+| `cane_crushed_t_net` | `[0, 100_000_000]` t | Pico Centro-Sur: ~50 Mt/quincena. Cap 2× |
+| `sugar_t_net` | `[0, 5_000_000]` t | Pico: ~3 Mt/quincena |
+| `ethanol_anhydrous_m3_net` | `[0, 5_000_000]` m³ | Pico ~2.5 Mm³ |
+| `ethanol_hydrated_m3_net` | `[0, 5_000_000]` m³ | Idem |
+| `ethanol_total_m3_net` | `[0, 5_000_000]` m³ | Σ anhídrico + hidratado net |
+
+#### 3.2.C `sugar_mix_pct` — derivado de NET
+
+| Campo | Rango válido | Justificación |
+|-------|--------------|---------------|
+| `sugar_mix_pct` | `[20.0, 60.0]` % | Mix típico Brasil 35-50%. Se calcula `sugar_net / (sugar_net + ethanol_total_net × 1.2)`. Cumulative-mix es un weighted-average informativo pero NO accionable; el net-mix refleja la decisión industrial real de esa quincena |
+
+#### 3.2.1 Aplicación de los rangos
+
+| Capa | Cuándo | Qué se valida |
+|------|--------|---------------|
+| **Write-side, `_parse_xls`** | Durante ingestion XLS | Solo `*_cumulative` (es lo que MAPA emite). Si cualquier campo cumulative cae fuera de rango → **fila descartada + WARNING**. Justificación: columna XLS desfasada produciría valores claramente fuera de escala |
+| **Derive-side, P3.E.7** | Al computar deltas | `*_net` debe estar en rango §3.2.B Y `>= 0` (negativo implica revisión retroactiva mal aplicada o desorden de quincenas). `sugar_mix_pct` ∈ §3.2.C |
+| **Read-side, `get_latest_production`** | Antes de servir a scoring | Freshness §4 (35d) + presencia mínima de `*_net` no nulos en la fila vigente PIT |
+
+**Justificación arquitectónica:** el legacy stack (pre-P3.E) confundía
+cumulative con net y aplicaba rangos quincenales a valores acumulados,
+rechazando incorrectamente filas legítimas de cierre de safra (cane=663M era
+rechazado por gate [0, 100M]). La dualidad explícita elimina esa categoría
+entera de falso-positivo.
 
 **Aduana estructural complementaria (`validate_count`):**
 
