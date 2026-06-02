@@ -27,8 +27,29 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import BrazilProduction
+from services.data_quality import (
+    check_or_log,
+    parse_log_warning,
+    validate_count,
+    validate_freshness,
+    validate_range,
+)
 
 logger = logging.getLogger(__name__)
+
+# BUSINESS_LOGIC §3.2 — rangos validos por campo MAPA quincenal nacional.
+MAPA_RANGE_CANE_T        = (0,    100_000_000)   # pico CS ~50 Mt/quincena
+MAPA_RANGE_SUGAR_T       = (0,    5_000_000)     # pico ~3 Mt/quincena
+MAPA_RANGE_ETHANOL_M3    = (0,    5_000_000)     # pico ~2.5 Mm3/quincena
+MAPA_RANGE_SUGAR_MIX_PCT = (20.0, 60.0)          # mix Brasil tipico 35-50%
+
+# BUSINESS_LOGIC §4 — MAPA quinzenal, max_age=35d (2 quincenas de margen).
+MAPA_MAX_AGE_DAYS = 35
+
+# P3.C — Si MAPA cambia columnas del XLS, n_valid/n_total cae bruscamente.
+# Umbral 0.85: tolera fallos esporadicos (XLS corrupto puntual) pero detecta
+# cambio estructural (parsing global roto) sin esperar revision humana.
+MAPA_STRUCTURAL_MIN_SUCCESS_RATE = 0.85
 
 BASE_URL   = "https://www.gov.br"
 INDEX_URL  = (
@@ -159,8 +180,30 @@ def _parse_date_from_url(url: str, harvest_year: str) -> Optional[date]:
     try:
         first_year = int(harvest_year.split("-")[0])
         return date(first_year, 4, 1)
-    except Exception:
+    except (ValueError, AttributeError, IndexError) as e:
+        parse_log_warning(
+            "brazil_mapa._parse_date_from_url",
+            f"url={url} harvest_year={harvest_year}", e,
+        )
         return None
+
+
+def _valid_season(key: str) -> bool:
+    """
+    True si key tiene formato 'YYYY-YYYY+1' (temporada consecutiva valida).
+    False + WARNING via parse_log_warning si key no parsea.
+    """
+    parts = key.split("-")
+    if len(parts) != 2:
+        return False
+    try:
+        y1, y2 = int(parts[0]), int(parts[1])
+        return y2 == y1 + 1   # solo temporadas consecutivas
+    except (ValueError, TypeError) as e:
+        parse_log_warning(
+            "brazil_mapa._valid_season", f"key={key}", e,
+        )
+        return False
 
 
 def _fortnight_seq(ref_date: date, harvest_year: str) -> int:
@@ -170,7 +213,10 @@ def _fortnight_seq(ref_date: date, harvest_year: str) -> int:
     """
     try:
         start_year = int(harvest_year.split("-")[0])
-    except Exception:
+    except (ValueError, AttributeError, IndexError) as e:
+        parse_log_warning(
+            "brazil_mapa._fortnight_seq", f"harvest_year={harvest_year}", e,
+        )
         start_year = ref_date.year
 
     april_start = date(start_year, 4, 1)
@@ -323,17 +369,31 @@ def _parse_xls(content: bytes, url: str, harvest_year: str) -> Optional[dict]:
                  cane_col, sugar_col, etanol_col, anidro_col, hidrat_col, tot_row)
 
     def _num(col):
+        """
+        Extrae valor numerico de (tot_row, col). Distingue:
+          - col None / celda vacia                 → return None silencioso (sin dato esperado)
+          - valor numerico o string parseable > 0  → int
+          - valor 0 o negativo                     → None silencioso (no aplica)
+          - string corrupto / tipo inesperado      → WARNING via parse_log_warning
+        """
         if col is None:
             return None
+        v = sheet.cell_value(tot_row, col)
+        # Celda vacia legitima (MAPA deja muchas celdas '' al final de seccion)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        if isinstance(v, (int, float)):
+            f = float(v)
+            return int(f) if f > 0 else None
         try:
-            v = sheet.cell_value(tot_row, col)
-            if isinstance(v, (int, float)):
-                f = float(v)
-                return int(f) if f > 0 else None
             cleaned = str(v).replace(".", "").replace(",", ".").strip()
             f = float(cleaned)
             return int(f) if f > 0 else None
-        except Exception:
+        except (ValueError, TypeError) as e:
+            parse_log_warning(
+                "brazil_mapa._num",
+                f"row={tot_row} col={col} raw={v!r}", e,
+            )
             return None
 
     cane   = _num(cane_col)
@@ -357,6 +417,28 @@ def _parse_xls(content: bytes, url: str, harvest_year: str) -> Optional[dict]:
         etanol_equiv_t = etanol_total * 1.2   # m3 → t equivalente azucar
         total_prod     = sugar + etanol_equiv_t
         sugar_mix      = round(sugar / total_prod * 100, 3) if total_prod > 0 else None
+
+    # P3.B — Range gates §3.2. Si cualquier campo cae fuera de rango,
+    # el parser leyo una columna equivocada (offset XLS roto) → discard total.
+    # cane y sugar tienen allow_none=False porque cane=None ya bloqueo arriba.
+    # ethanol_total y sugar_mix permiten None (etanol opcional, mix derivado).
+    field_checks = [
+        (cane,         "cane_crushed_t",   MAPA_RANGE_CANE_T,        False),
+        (sugar,        "sugar_t",          MAPA_RANGE_SUGAR_T,       True),
+        (etanol_total, "ethanol_total_m3", MAPA_RANGE_ETHANOL_M3,    True),
+        (sugar_mix,    "sugar_mix_pct",    MAPA_RANGE_SUGAR_MIX_PCT, True),
+    ]
+    for value, field, (vmin, vmax), allow_none in field_checks:
+        _, ok = check_or_log(
+            lambda v=value, f=field, mn=vmin, mx=vmax, an=allow_none: validate_range(
+                v, min_value=mn, max_value=mx,
+                source="brazil_mapa", field=f"{f}[{url.split('/')[-1]}]",
+                allow_none=an,
+            ),
+            on_error="warn",
+        )
+        if not ok:
+            return None  # discard fila completa — campo fuera de rango §3.2
 
     return {
         "cane_crushed_t":       cane,
@@ -430,23 +512,16 @@ def fetch_brazil_production(
         key = m.group(1) if m else u
         seen_urls[key] = u
 
-    # Filtrar temporadas invalidas (span de 1 año: YYYY-YYYY+1)
-    def _valid_season(key):
-        parts = key.split("-")
-        if len(parts) != 2:
-            return False
-        try:
-            y1, y2 = int(parts[0]), int(parts[1])
-            return y2 == y1 + 1   # solo temporadas consecutivas
-        except Exception:
-            return False
-
     seen_urls = {k: v for k, v in seen_urls.items() if _valid_season(k)}
     seasons_sorted = sorted(seen_urls.items(), reverse=True)[:max_seasons]
     logger.info("Temporadas a procesar: %s", [s[0] for s in seasons_sorted])
 
     inserted = 0
     errors   = 0
+    # P3.C — trackeo del structural success rate: solo XLS que DESCARGARON OK
+    # cuentan como "attempted" (los HTTP fail no son problemas estructurales).
+    n_xls_downloaded = 0
+    n_xls_parsed_ok  = 0
     processed_seasons = []
 
     for harvest_year, season_url in seasons_sorted:
@@ -465,6 +540,7 @@ def fetch_brazil_production(
                 errors += 1
                 continue
 
+            n_xls_downloaded += 1
             parsed = _parse_xls(content, xls_url, harvest_year)
             if parsed is None:
                 errors += 1
@@ -476,6 +552,7 @@ def fetch_brazil_production(
                 errors += 1
                 continue
 
+            n_xls_parsed_ok += 1
             seq = _fortnight_seq(ref_date, harvest_year)
             record = {
                 "harvest_year":  harvest_year,
@@ -499,13 +576,51 @@ def fetch_brazil_production(
 
     session.commit()
     logger.info("MAPA ingestion completa: %d filas, %d errores", inserted, errors)
-    return {"inserted": inserted, "errors": errors, "seasons": processed_seasons}
+
+    # P3.C — Aduana estructural §4.1. Si MAPA cambio columnas del XLS y todas
+    # las filas fallan _parse_xls, el ratio cae bruscamente. ERROR (no raise)
+    # para que el pipeline siga con otras fuentes pero quede traza explicita.
+    structural_rate = None
+    if n_xls_downloaded > 0:
+        rate, ok = check_or_log(
+            lambda: validate_count(
+                n_xls_parsed_ok, n_xls_downloaded,
+                min_success_rate=MAPA_STRUCTURAL_MIN_SUCCESS_RATE,
+                source="brazil_mapa", field="xls_parse_success_rate",
+            ),
+            on_error="error",
+        )
+        if ok:
+            structural_rate = rate
+
+    return {
+        "inserted": inserted,
+        "errors": errors,
+        "seasons": processed_seasons,
+        "n_xls_downloaded": n_xls_downloaded,
+        "n_xls_parsed_ok":  n_xls_parsed_ok,
+        "structural_rate":  structural_rate,
+    }
 
 
-def get_latest_production(session: Session, n: int = 4) -> list[dict]:
+def get_latest_production(
+    session: Session, n: int = 4, *, reference: Optional[date] = None,
+) -> list[dict]:
     """
-    Devuelve las N ultimas filas de brazil_production ordenadas por report_date DESC.
-    Util para calcular senales en tiempo real.
+    Devuelve las N ultimas filas de brazil_production ordenadas por report_date DESC,
+    con freshness gate read-side (§4.1).
+
+    La fila MAS RECIENTE se valida contra MAPA_MAX_AGE_DAYS (35d, §4). Si esta
+    stale → lista vacia + WARNING (toda la serie es obsoleta, downstream debe
+    degradar). Filas historicas dentro del top-N se mantienen siempre que la
+    cabeza pase el gate (la freshness aplica al "estado actual" reportado por
+    MAPA, no a cada quincena del historial).
+
+    Args:
+      session   — SQLAlchemy session.
+      n         — numero de quincenas mas recientes a devolver.
+      reference — fecha de referencia para freshness (default: date.today()).
+                  Inyectable para testing.
     """
     from sqlalchemy import text
     rows = session.execute(text("""
@@ -515,6 +630,22 @@ def get_latest_production(session: Session, n: int = 4) -> list[dict]:
         ORDER BY report_date DESC
         LIMIT :n
     """), {"n": n}).fetchall()
+
+    if not rows:
+        return []
+
+    # Freshness gate sobre el report_date mas reciente
+    latest_date = rows[0][0]
+    _, fresh = check_or_log(
+        lambda: validate_freshness(
+            latest_date, max_age_days=MAPA_MAX_AGE_DAYS,
+            source="brazil_mapa", field="latest_report_date",
+            reference=reference,
+        ),
+        on_error="warn",
+    )
+    if not fresh:
+        return []
 
     return [
         {

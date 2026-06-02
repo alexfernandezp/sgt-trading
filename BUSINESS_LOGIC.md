@@ -68,6 +68,38 @@ suficiente para rechazar errores obvios (precios negativos, NDVI = 1.8).
 | `ethanol_total_m3` | `[0, 5_000_000]` m³ | Pico: ~2.5 Mm³/quincena |
 | `sugar_mix_pct` | `[20.0, 60.0]` % | Mix típico Brasil: 35-50%. Fuera de [20, 60] = error de parser |
 
+#### 3.2.1 Aplicación en `_parse_xls` y validador estructural
+
+Los rangos §3.2 se aplican **en `ingestion/brazil_mapa._parse_xls`**, justo
+antes del `return`. Si cualquier campo (`cane_crushed_t`, `sugar_t`,
+`ethanol_total_m3`, `sugar_mix_pct`) cae fuera de rango → **fila descartada
+completa + WARNING**. Justificación: MAPA publica XLS con columnas variables
+entre temporadas; si el parser detecta una columna "Cana" desfasada,
+extraerá un valor que (por escala) cae claramente fuera de rango. Mejor
+descartar la fila que insertar `cane = 200_000_000_000` corrompiendo el
+scoring downstream.
+
+**Aduana estructural complementaria (`validate_count`):**
+
+Si MAPA cambia el header del XLS (ej. renombra "Cana" → "Cana-de-açúcar") y
+TODAS las filas pasan a fallar `_parse_xls`, el range gate por fila no
+detecta el cambio sistemático. Por eso `fetch_brazil_production` añade:
+
+```python
+validate_count(
+    n_xls_parsed_ok, n_xls_downloaded,
+    min_success_rate=0.85,
+    source="brazil_mapa", field="xls_parse_success_rate",
+)
+```
+
+Con `check_or_log(on_error="error")`: si la tasa cae bajo 85% → **ERROR
+estructural** en log (no raise — el pipeline sigue con otras fuentes pero
+queda traza explícita para revisión humana). 85% tolera fallos esporádicos
+(1-2 XLS corruptos por temporada) pero detecta cambio estructural global.
+
+
+
 ### 3.3 CEPEA (precios físicos Brasil)
 
 | Serie | Rango válido | Justificación |
@@ -206,6 +238,7 @@ basura sintética en DB; freshness guard impide que un fallo de scraping (data
 |------------------|---------------------|------------------|
 | `cepea.get_latest_cepea()` | WARNING por serie stale | Dict sin la(s) clave(s) stale. Si **todas** las series están stale → dict vacío |
 | `santos_port.get_latest_snapshot()` | WARNING | `None` (degradación total) |
+| `brazil_mapa.get_latest_production()` | WARNING (sobre fila más reciente, 35d) | `[]` (lista vacía — toda la serie obsoleta cuando MAPA frenó publicación) |
 
 **Why granularidad por serie en CEPEA:**
 
