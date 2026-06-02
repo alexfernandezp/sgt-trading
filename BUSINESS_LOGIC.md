@@ -214,6 +214,13 @@ históricas ya guardadas correctamente.
 |-------|--------------|---------------|
 | `weight_t`, `load_qty_t` por barco | `[0, 200_000]` t | Bulker grande: 80k DWT; Capesize: 180k DWT |
 
+**Fuente Santos (2026-06-02):** WordPress en `portodesantos.com.br/en/ship-tracker/` quedó inservible — el HTML que sirve a un cliente HTTP plano viene sin las tablas (las rellena el navegador vía AJAX). Migrado a endpoints REST/JSON del WCF interno:
+
+- `http://aplicacoes.portodesantos.com.br:9104/siap/servicos/atracacao/siteweb/listarnaviosatracados` → page='berthed'
+- `http://aplicacoes.portodesantos.com.br:9104/siap/servicos/atracacao/siteweb/listarnaviosprogramados` → page='scheduled'
+
+**Endpoint `expected` no disponible:** El WCF no expone método público para "barcos esperados sin slot". Todas las variantes razonables del nombre devuelven HTTP 405 y los endpoints de discovery (`/help`, `/$metadata`) están bloqueados. `fetch_santos_port` ya no escribe `page='expected'`; `n_expected` y `tonnage_expected` quedan en 0 para registros nuevos. La ventana histórica de `santos_signal` A5 sigue funcionando sobre el `expected` legacy hasta que caduque (~30d), después degrada a las dos componentes que sí tienen señal viva (level + velocity sobre berthed/scheduled).
+
 ### 3.7 USDA PSD (balance global)
 
 | Campo | Rango válido | Justificación |

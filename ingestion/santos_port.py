@@ -1,37 +1,34 @@
 """
-Scraper del ship tracker del Puerto de Santos (Porto de Santos).
+Scraper del ship tracker del Puerto de Santos.
 
-Fuente: https://www.portodesantos.com.br/en/ship-tracker/
+Fuente real (REST/JSON, WCF self-hosted):
+  http://aplicacoes.portodesantos.com.br:9104/siap/servicos/atracacao/siteweb/
 
-Tres páginas:
-  expected-arrivals : barcos en camino (próximas 1-3 semanas)
-  scheduled-arrivals: confirmados para atracar (próximos días)
-  berthed-ships     : actualmente atracados y cargando/descargando
+Endpoints activos:
+  listarnaviosatracados   → barcos atracados (page='berthed')
+  listarnaviosprogramados → barcos programados a atracar (page='scheduled')
 
-Filtro: solo filas con Mercadoria/Cargo que contenga ACUCAR o SUGAR.
-Navegación Long = exportación internacional (Cabo = cabotaje doméstico).
+Páginas anteriores en HTML (portodesantos.com.br/en/ship-tracker/) quedaron
+inservibles: el WordPress devuelve cascarón vacío — el navegador rellenaba
+las tablas vía AJAX al endpoint REST. Migración a JSON directo.
 
-Columnas por página:
-  expected (14 cols):
-    0=Ship  1=Flag  2=Com/Cal  3=Nav  4=Arrival  5=Notice  6=Agency
-    7=Operat  8=Goods  9=Weight  10=Voyage  11=DUV  12=P  13=Terminal
+Endpoint "expected" (barcos en camino sin slot asignado) no está expuesto:
+todas las variantes razonables devuelven 405. Se omite — page='expected'
+no se escribirá. Downstream (santos_signal A5) degrada limpio porque la
+ventana histórica seguirá teniendo expected legacy hasta agotarse, y
+después usará solo berthed + scheduled (pesos rebalancean implícitamente
+por z-score sobre serie nueva).
 
-  berthed (11 cols):
-    0=Terminal  1=Ship  2-5=Turnos  6=Cargo  7=Desc(unload)  8=Emb(load)  9=Type  10=Qty
-
-  scheduled (8+ cols):
-    0=Date  1=Hour  2=Local  3=Ship  4=Cargo  5=Evento  6=Voyage  7=DUV  8+=slots
+Filtro: solo barcos con Mercadoria que contenga ACUCAR o SUGAR.
 """
 import logging
 import re
-import ssl
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import requests
 import urllib3
-from bs4 import BeautifulSoup
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -50,45 +47,42 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # implican scraping roto, no rezago natural.
 SANTOS_MAX_AGE_DAYS = 2
 
-PAGES = {
-    "expected":  "https://www.portodesantos.com.br/en/ship-tracker/expected-arrivals/",
-    "scheduled": "https://www.portodesantos.com.br/en/ship-tracker/scheduled-arrivals/",
-    "berthed":   "https://www.portodesantos.com.br/en/ship-tracker/berthed-ships/",
+API_BASE = "http://aplicacoes.portodesantos.com.br:9104/siap/servicos/atracacao/siteweb"
+ENDPOINTS = {
+    "berthed":   f"{API_BASE}/listarnaviosatracados",
+    "scheduled": f"{API_BASE}/listarnaviosprogramados",
 }
 
 SUGAR_RE = re.compile(r"AC[UÚ]CAR|SUGAR", re.IGNORECASE)
 HEADERS  = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+# Patrón de fecha .NET WCF: /Date(1780455600000-0300)/
+DOTNET_DATE_RE = re.compile(r"/Date\((-?\d+)([+-]\d{4})?\)/")
 
 
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
-def _get_html(url: str, retries: int = 3) -> Optional[str]:
+def _get_json(url: str, retries: int = 3) -> Optional[dict]:
+    """GET JSON con reintentos + backoff exponencial. Devuelve dict o None."""
     for attempt in range(retries):
         try:
             r = requests.get(url, headers=HEADERS, timeout=30, verify=False)
             r.raise_for_status()
-            r.encoding = r.apparent_encoding or "utf-8"
-            return r.text
+            return r.json()
         except Exception as e:
             logger.warning("GET %s intento %d: %s", url, attempt + 1, e)
             time.sleep(2 ** attempt)
     return None
 
 
-def _cells(tr) -> list[str]:
-    """Extrae texto limpio de todos los <td> de un <tr>."""
-    return [td.get_text(separator=" ", strip=True) for td in tr.find_all("td")]
-
-
 def _validate_santos_tonnage(load_qty_t, weight_t, ship_name: str) -> bool:
     """
     Valida load_qty_t y weight_t contra rango §3.6 [0, 200_000] toneladas.
 
-    Permite None (legítimo: muchos barcos no traen ambos campos). Solo
-    rechaza valores explícitos fuera de rango. Returns False + WARNING si
-    alguno se sale; True si ambos son válidos o None.
+    Permite None. Solo rechaza valores explícitos fuera de rango. Returns
+    False + WARNING si alguno se sale; True si ambos son válidos o None.
     """
     _, load_ok = check_or_log(
         lambda: validate_range(
@@ -109,14 +103,19 @@ def _validate_santos_tonnage(load_qty_t, weight_t, ship_name: str) -> bool:
     return load_ok and weight_ok
 
 
-def _parse_int(s: str) -> Optional[int]:
-    """Parsea tonelajes como '12,345 t' o '55000 ton' a int. Skip-and-log si malformado.
-
-    Devuelve None si el string es vacío o solo contiene caracteres no-numéricos.
-    Logs WARNING para cualquier ValueError / IndexError inesperado, evitando que
-    cambios estructurales del HTML del ship tracker introduzcan NULLs en masa
-    sin alerta.
+def _parse_int(s) -> Optional[int]:
+    """Parsea valor numérico a int. Mantiene compatibilidad con el código legacy
+    (acepta strings tipo '12,345 t'). Devuelve None si vacío / no numérico.
+    Log WARNING si excepción inesperada — cambio de schema → alerta sin NULLs masivos.
     """
+    if s is None:
+        return None
+    if isinstance(s, (int, float)):
+        try:
+            return int(s)
+        except (ValueError, TypeError) as e:
+            parse_log_warning("santos_port._parse_int", s, e)
+            return None
     try:
         cleaned = re.sub(r"[^\d]", "", str(s).split()[0])
         return int(cleaned) if cleaned else None
@@ -127,6 +126,8 @@ def _parse_int(s: str) -> Optional[int]:
 
 def _parse_arrival_dt(s: str) -> Optional[datetime]:
     """Parsea 'DD/MM/YYYY HH:MM:SS' o 'DD/MM/YYYY'."""
+    if not s:
+        return None
     for fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
         try:
             return datetime.strptime(s.strip(), fmt)
@@ -135,84 +136,102 @@ def _parse_arrival_dt(s: str) -> Optional[datetime]:
     return None
 
 
+def _parse_dotnet_date(s: str) -> Optional[datetime]:
+    """Parsea formato WCF '/Date(epoch_ms[+/-HHMM])/' a datetime naive local Santos.
+
+    El epoch viene en UTC; el offset indica la zona del servidor (Santos = -0300).
+    Devolvemos datetime naive en hora local Santos para coherencia con el resto
+    del modelo (que usa naive DateTime).
+    """
+    if not s:
+        return None
+    m = DOTNET_DATE_RE.search(str(s))
+    if not m:
+        return None
+    try:
+        epoch_ms = int(m.group(1))
+        offset_str = m.group(2) or "+0000"
+        sign = 1 if offset_str[0] == "+" else -1
+        off_h = int(offset_str[1:3])
+        off_m = int(offset_str[3:5])
+        offset = timedelta(hours=off_h, minutes=off_m) * sign
+        dt_utc = datetime.fromtimestamp(epoch_ms / 1000.0, tz=timezone.utc)
+        return (dt_utc + offset).replace(tzinfo=None)
+    except (ValueError, IndexError, OverflowError) as e:
+        parse_log_warning("santos_port._parse_dotnet_date", s, e)
+        return None
+
+
 # ---------------------------------------------------------------------------
-# Page parsers
+# Parsers JSON
 # ---------------------------------------------------------------------------
 
-def _parse_expected(html: str) -> list[dict]:
+def _parse_berthed(payload: dict) -> list[dict]:
     """
-    expected-arrivals: 14 columnas por fila.
-    Filtra cargo ACUCAR/SUGAR. Incluye Long y Cabo (etiquetados).
+    listarnaviosatracados → schema:
+      {"PesquisarNaviosAtracadosResult": {"NaviosAtracados": [{...}, ...]}}
+
+    Campos por ship:
+      NomeNavio, Mercadoria, Embarque (toneladas cargando), Descarga,
+      Local, TerminalEstatistica, NumeroViagem, AnoViagem, IdRap.
     """
-    soup  = BeautifulSoup(html, "html.parser")
+    try:
+        ships_raw = payload["PesquisarNaviosAtracadosResult"]["NaviosAtracados"]
+    except (KeyError, TypeError) as e:
+        parse_log_warning("santos_port._parse_berthed", payload, e)
+        return []
+
     ships = []
-    for tr in soup.find_all("tr"):
-        row = _cells(tr)
-        if len(row) < 14:
-            continue
-        cargo = row[8]
+    for s in ships_raw:
+        cargo = s.get("Mercadoria", "") or ""
         if not SUGAR_RE.search(cargo):
             continue
         ships.append({
-            "ship":       row[0].strip(),
-            "nav_type":   row[3].strip(),    # Long | Cabo
-            "arrival_dt": _parse_arrival_dt(row[4]),
-            "operat":     row[7].strip(),    # EMB=loading, DESC=unloading
+            "ship":       (s.get("NomeNavio") or "").strip(),
+            "terminal":   (s.get("TerminalEstatistica") or s.get("Local") or "").strip(),
             "cargo":      cargo.strip(),
-            "weight_t":   _parse_int(row[9]),
-            "terminal":   row[13].strip(),
-            "voyage":     row[10].strip(),
-            "duv":        row[11].strip(),
+            "load_qty_t": _parse_int(s.get("Embarque")),
+            "desc_qty_t": _parse_int(s.get("Descarga")),
+            "voyage":     str(s.get("NumeroViagem") or "").strip(),
+            "duv":        str(s.get("IdRap") or "").strip() or None,
         })
     return ships
 
 
-def _parse_berthed(html: str) -> list[dict]:
+def _parse_scheduled(payload: dict) -> list[dict]:
     """
-    berthed-ships: 11 columnas.
-    col8 = Emb/Load (tonelaje cargando) — lo que nos importa para exportación.
+    listarnaviosprogramados → schema:
+      {"PesquisarNaviosProgramadosResult": {"NaviosProgramados": [{...}, ...]}}
+
+    Campos por ship:
+      NomeNavio, Mercadoria, Data, Hora, DataHora (.NET), Local, Manobra,
+      NumeroViagem, IdRap, Periodo.
     """
-    soup  = BeautifulSoup(html, "html.parser")
+    try:
+        ships_raw = payload["PesquisarNaviosProgramadosResult"]["NaviosProgramados"]
+    except (KeyError, TypeError) as e:
+        parse_log_warning("santos_port._parse_scheduled", payload, e)
+        return []
+
     ships = []
-    for tr in soup.find_all("tr"):
-        row = _cells(tr)
-        if len(row) < 9:
-            continue
-        cargo = row[6] if len(row) > 6 else ""
+    for s in ships_raw:
+        cargo = s.get("Mercadoria", "") or ""
         if not SUGAR_RE.search(cargo):
             continue
-        ships.append({
-            "ship":       row[1].strip(),
-            "terminal":   row[0].strip(),
-            "cargo":      cargo.strip(),
-            "load_qty_t": _parse_int(row[8]),   # Emb (loading)
-            "desc_qty_t": _parse_int(row[7]),   # Desc (unloading)
-        })
-    return ships
 
+        arr = _parse_dotnet_date(s.get("DataHora"))
+        if arr is None:
+            data_hora = f"{s.get('Data', '')} {s.get('Hora', '')}".strip()
+            arr = _parse_arrival_dt(data_hora)
 
-def _parse_scheduled(html: str) -> list[dict]:
-    """
-    scheduled-arrivals: calendario por turnos.
-    col0=Date  col1=Hour  col2=Local  col3=Ship  col4=Cargo  col5=Evento  col6=Voyage  col7=DUV
-    """
-    soup  = BeautifulSoup(html, "html.parser")
-    ships = []
-    for tr in soup.find_all("tr"):
-        row = _cells(tr)
-        if len(row) < 5:
-            continue
-        cargo = row[4] if len(row) > 4 else ""
-        if not SUGAR_RE.search(cargo):
-            continue
         ships.append({
-            "ship":       row[3].strip() if len(row) > 3 else "",
-            "terminal":   row[2].strip() if len(row) > 2 else "",
+            "ship":       (s.get("NomeNavio") or "").strip(),
+            "terminal":   (s.get("Local") or "").strip(),
             "cargo":      cargo.strip(),
-            "arrival_dt": _parse_arrival_dt(row[0]) if row[0] else None,
-            "evento":     row[5].strip() if len(row) > 5 else "",
-            "voyage":     row[6].strip() if len(row) > 6 else "",
-            "duv":        row[7].strip() if len(row) > 7 else "",
+            "arrival_dt": arr,
+            "evento":     (s.get("Manobra") or "").strip(),
+            "voyage":     str(s.get("NumeroViagem") or "").strip(),
+            "duv":        str(s.get("IdRap") or "").strip() or None,
         })
     return ships
 
@@ -223,7 +242,6 @@ def _parse_scheduled(html: str) -> list[dict]:
 
 def _upsert_ships(session: Session, page: str, ships: list[dict], today: date):
     for s in ships:
-        # Range Gate §3.6 — descarta barcos con tonelajes corruptos
         if not _validate_santos_tonnage(
             s.get("load_qty_t"), s.get("weight_t"), s.get("ship", "?")
         ):
@@ -231,9 +249,9 @@ def _upsert_ships(session: Session, page: str, ships: list[dict], today: date):
         record = {
             "snapshot_date": today,
             "page":          page,
-            "ship_name":     s.get("ship", "DESCONOCIDO"),
+            "ship_name":     s.get("ship") or "DESCONOCIDO",
             "cargo":         s.get("cargo"),
-            "terminal":      s.get("terminal"),
+            "terminal":      s.get("terminal") or "",
             "nav_type":      s.get("nav_type"),
             "arrival_dt":    s.get("arrival_dt"),
             "load_qty_t":    s.get("load_qty_t"),
@@ -264,19 +282,18 @@ def _upsert_ships(session: Session, page: str, ships: list[dict], today: date):
 
 def fetch_santos_port(session: Session) -> dict:
     """
-    Descarga las tres páginas del ship tracker de Santos y almacena en DB
+    Descarga endpoints REST del Puerto de Santos y almacena en DB
     los barcos con cargo ACUCAR/SUGAR.
+
+    NOTA: page='expected' no se ingiere (endpoint no expuesto por el
+    proveedor). Las claves n_expected/tonnage_expected se mantienen en 0
+    para compatibilidad con santos_signal.
 
     Devuelve:
       {
-        "expected":  [lista de ships],
-        "scheduled": [lista de ships],
-        "berthed":   [lista de ships],
-        "n_expected":  int,   # solo Long
-        "n_scheduled": int,
-        "n_berthed":   int,
-        "tonnage_expected":  int,  # weight_t sumado (Long)
-        "tonnage_berthed":   int,  # load_qty_t sumado
+        "expected": [], "scheduled": [...], "berthed": [...],
+        "n_expected": 0, "n_scheduled": int, "n_berthed": int,
+        "tonnage_expected": 0, "tonnage_berthed": int,
         "errors": [str],
       }
     """
@@ -289,40 +306,26 @@ def fetch_santos_port(session: Session) -> dict:
     }
 
     parsers = {
-        "expected":  _parse_expected,
-        "scheduled": _parse_scheduled,
         "berthed":   _parse_berthed,
+        "scheduled": _parse_scheduled,
     }
 
     for page, parser in parsers.items():
-        url  = PAGES[page]
-        html = _get_html(url)
-        if html is None:
-            result["errors"].append("No se pudo descargar %s" % page)
+        payload = _get_json(ENDPOINTS[page])
+        if payload is None:
+            result["errors"].append(f"No se pudo descargar {page}")
             continue
 
-        ships = parser(html)
+        ships = parser(payload)
         result[page] = ships
         _upsert_ships(session, page, ships, today)
         logger.info("Santos %s: %d barcos ACUCAR", page, len(ships))
 
     session.commit()
 
-    # Métricas de resumen
-    # Expected: solo Long con arrival_dt >= hoy (excluir entradas ya pasadas)
-    exp_long = [
-        s for s in result["expected"]
-        if s.get("nav_type", "").strip() == "Long"
-        and (s.get("arrival_dt") is None or s["arrival_dt"].date() >= today)
-    ]
-    result["n_expected"]       = len(exp_long)
-    result["tonnage_expected"] = sum(s["weight_t"] or 0 for s in exp_long)
-
-    result["n_scheduled"]      = len(result["scheduled"])
-
-    # Berthed: todos los ACUCAR (ya filtrado por regex)
-    result["n_berthed"]        = len(result["berthed"])
-    result["tonnage_berthed"]  = sum(s["load_qty_t"] or 0 for s in result["berthed"])
+    result["n_scheduled"]     = len(result["scheduled"])
+    result["n_berthed"]       = len(result["berthed"])
+    result["tonnage_berthed"] = sum((s.get("load_qty_t") or 0) for s in result["berthed"])
 
     return result
 
@@ -331,15 +334,13 @@ def get_latest_snapshot(
     session: Session, *, reference: Optional[date] = None,
 ) -> Optional[dict]:
     """
-    Lee el último snapshot de DB (hoy o más reciente disponible) con freshness
-    gate (§4.1). Si el snapshot más reciente excede SANTOS_MAX_AGE_DAYS (2d),
-    retorna None + WARNING — fuerza al downstream a degradar limpiamente sin
-    contaminar señales con un line-up "congelado".
+    Lee el último snapshot de DB con freshness gate (§4.1). Si excede
+    SANTOS_MAX_AGE_DAYS (2d), retorna None + WARNING — fuerza al downstream
+    a degradar limpiamente sin contaminar señales con line-up "congelado".
 
     Args:
       session   — SQLAlchemy session.
       reference — fecha de referencia para freshness (default: date.today()).
-                  Inyectable para testing con datos sintéticos.
 
     Returns:
       Dict con métricas del snapshot, o None si no hay datos o si están stale.
@@ -376,14 +377,18 @@ def get_latest_snapshot(
 
     for r in rows:
         page, ship, cargo, terminal, nav, arr, load_q, weight, evento, voyage, _ = r
-        d = {
+        if page not in result:
+            continue
+        result[page].append({
             "ship": ship, "cargo": cargo, "terminal": terminal,
             "nav_type": nav, "arrival_dt": arr,
             "load_qty_t": load_q, "weight_t": weight,
             "evento": evento, "voyage": voyage,
-        }
-        result[page].append(d)
+        })
 
+    # Expected legacy puede quedar en DB con nav_type='Long' — preservamos esa
+    # rama para que el histórico siga sumando hasta que caduque. Datos nuevos
+    # llegan con expected=[] (no se ingiere ya) y tonnage_expected=0.
     today    = date.today()
     exp_long = [
         s for s in result["expected"]
@@ -392,9 +397,9 @@ def get_latest_snapshot(
              (hasattr(s["arrival_dt"], "date") and s["arrival_dt"].date() >= today))
     ]
     result["n_expected"]       = len(exp_long)
-    result["tonnage_expected"] = sum((s["weight_t"] or 0) for s in exp_long)
+    result["tonnage_expected"] = sum((s.get("weight_t") or 0) for s in exp_long)
     result["n_scheduled"]      = len(result["scheduled"])
     result["n_berthed"]        = len(result["berthed"])
-    result["tonnage_berthed"]  = sum((s["load_qty_t"] or 0) for s in result["berthed"])
+    result["tonnage_berthed"]  = sum((s.get("load_qty_t") or 0) for s in result["berthed"])
 
     return result
