@@ -28,10 +28,18 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import CepeaPrice
-from services.data_quality import check_or_log, parse_log_warning, validate_range
+from services.data_quality import (
+    check_or_log,
+    parse_log_warning,
+    validate_freshness,
+    validate_range,
+)
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# BUSINESS_LOGIC §4 — max_age_days para CEPEA es 5 (cubre fin de semana + festivo).
+CEPEA_MAX_AGE_DAYS = 5
 
 URLS = {
     "ethanol": "https://cepea.org.br/en/indicator/ethanol.aspx",
@@ -314,10 +322,25 @@ def fetch_cepea(session: Session) -> dict:
     return result
 
 
-def get_latest_cepea(session: Session) -> dict:
+def get_latest_cepea(session: Session, *, reference: Optional[date] = None) -> dict:
     """
-    Lee el último valor de cada serie CEPEA desde DB.
-    Devuelve dict {series_name: price_usd} con el dato más reciente.
+    Lee el último valor de cada serie CEPEA desde DB con freshness gate (§4.1).
+
+    Para cada serie aplica `validate_freshness(price_date, max_age_days=5)`.
+    Series cuyo último dato exceda CEPEA_MAX_AGE_DAYS (default: 5d) son
+    descartadas del dict de retorno + WARNING en el audit log. Esto permite
+    a downstream (ej. ethanol_parity) consumir sólo precios accionables y
+    degradar limpiamente las series stale.
+
+    Args:
+      session   — SQLAlchemy session.
+      reference — fecha de referencia para el cálculo de antigüedad. Default:
+                  date.today(). Inyectable para testing con datos sintéticos.
+
+    Returns:
+      Dict {series_name: {price_usd, price_date, unit, pct_*}}. Si TODAS las
+      series están stale → dict vacío (caller debe interpretarlo como
+      "datos no disponibles" y degradar la señal).
     """
     from sqlalchemy import text
     rows = session.execute(text("""
@@ -327,14 +350,26 @@ def get_latest_cepea(session: Session) -> dict:
         ORDER BY series_name, price_date DESC
     """)).fetchall()
 
-    return {
-        r[0]: {
+    out: dict = {}
+    for r in rows:
+        series_name = r[0]
+        price_date  = r[2]
+        _, fresh = check_or_log(
+            lambda pd=price_date, sn=series_name: validate_freshness(
+                pd, max_age_days=CEPEA_MAX_AGE_DAYS,
+                source="cepea", field=f"latest_price_date[{sn}]",
+                reference=reference,
+            ),
+            on_error="warn",
+        )
+        if not fresh:
+            continue
+        out[series_name] = {
             "price_usd":    float(r[1]) if r[1] else None,
-            "price_date":   str(r[2]),
+            "price_date":   str(price_date),
             "unit":         r[3],
             "pct_daily":    float(r[4]) if r[4] else None,
             "pct_weekly":   float(r[5]) if r[5] else None,
             "pct_monthly":  float(r[6]) if r[6] else None,
         }
-        for r in rows
-    }
+    return out

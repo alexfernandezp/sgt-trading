@@ -36,10 +36,19 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from models import SantosPortSnapshot
-from services.data_quality import check_or_log, parse_log_warning, validate_range
+from services.data_quality import (
+    check_or_log,
+    parse_log_warning,
+    validate_freshness,
+    validate_range,
+)
 
 logger = logging.getLogger(__name__)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# BUSINESS_LOGIC §4 — line-up del puerto se publica en near-real-time; gaps >48h
+# implican scraping roto, no rezago natural.
+SANTOS_MAX_AGE_DAYS = 2
 
 PAGES = {
     "expected":  "https://www.portodesantos.com.br/en/ship-tracker/expected-arrivals/",
@@ -318,10 +327,22 @@ def fetch_santos_port(session: Session) -> dict:
     return result
 
 
-def get_latest_snapshot(session: Session) -> Optional[dict]:
+def get_latest_snapshot(
+    session: Session, *, reference: Optional[date] = None,
+) -> Optional[dict]:
     """
-    Lee el último snapshot de DB (hoy o más reciente disponible).
-    Devuelve el mismo dict de métricas que fetch_santos_port sin hacer HTTP.
+    Lee el último snapshot de DB (hoy o más reciente disponible) con freshness
+    gate (§4.1). Si el snapshot más reciente excede SANTOS_MAX_AGE_DAYS (2d),
+    retorna None + WARNING — fuerza al downstream a degradar limpiamente sin
+    contaminar señales con un line-up "congelado".
+
+    Args:
+      session   — SQLAlchemy session.
+      reference — fecha de referencia para freshness (default: date.today()).
+                  Inyectable para testing con datos sintéticos.
+
+    Returns:
+      Dict con métricas del snapshot, o None si no hay datos o si están stale.
     """
     from sqlalchemy import text
     rows = session.execute(text("""
@@ -335,7 +356,19 @@ def get_latest_snapshot(session: Session) -> Optional[dict]:
     if not rows:
         return None
 
-    snap_date = str(rows[0][10])
+    snap_date_raw = rows[0][10]
+    _, fresh = check_or_log(
+        lambda: validate_freshness(
+            snap_date_raw, max_age_days=SANTOS_MAX_AGE_DAYS,
+            source="santos_port", field="latest_snapshot_date",
+            reference=reference,
+        ),
+        on_error="warn",
+    )
+    if not fresh:
+        return None
+
+    snap_date = str(snap_date_raw)
     result    = {"expected": [], "scheduled": [], "berthed": [],
                  "n_expected": 0, "n_scheduled": 0, "n_berthed": 0,
                  "tonnage_expected": 0, "tonnage_berthed": 0,

@@ -192,6 +192,47 @@ una señal, el caller debe degradar o abortar (no usar dato stale silenciosament
 | OCSB Thailand | Trimestral | 130 | Latencia oficial |
 | ISMA India | Mensual durante crush | 60 | Off-season: 180 |
 
+### 4.1 Aplicación de Freshness en Lectura (Read-Side Gates)
+
+Los rangos de §3.x se aplican al **escribir** (boundary de ingestion). Los
+`max_age_days` de §4 se aplican al **leer** (justo antes de que un downstream
+consumer use el dato). Ambos blindajes son complementarios: range guard impide
+basura sintética en DB; freshness guard impide que un fallo de scraping (data
+"congelada") contamine señales con precios obsoletos.
+
+**Política de retorno en read-side gates:**
+
+| Función pública | Severidad si stale | Valor retornado |
+|------------------|---------------------|------------------|
+| `cepea.get_latest_cepea()` | WARNING por serie stale | Dict sin la(s) clave(s) stale. Si **todas** las series están stale → dict vacío |
+| `santos_port.get_latest_snapshot()` | WARNING | `None` (degradación total) |
+
+**Why granularidad por serie en CEPEA:**
+
+CEPEA expone 6 series con frecuencias mixtas (`hydrous_paulinia_usd_m3` es
+diaria; `hydrous_fuel_usd_liter` y otras son semanales). Aplicar un único veto
+total castigaría las series diarias por la latencia natural de las semanales.
+La degradación granular permite a `services/ethanol_parity.py` continuar
+operando con las series frescas y marcar las stale como "no disponibles".
+
+**Why veto total en Santos:**
+
+Santos publica el line-up del puerto en tiempo casi real. Si `snapshot_date` no
+se ha actualizado en >48h, el scraping está **roto**, no rezagado. No hay
+sub-señales accionables sin un snapshot coherente → `None` fuerza al downstream
+(`santos_signal.py`) a degradar limpiamente.
+
+**Incident audit trail esperado:**
+
+```
+WARNING DataQualityError | source=cepea field=latest_price_date[hydrous_paulinia_usd_m3]
+        value='2026-05-25' expected='<= 5d old (ref=2026-06-02)'
+WARNING DataQualityError | source=santos_port field=latest_snapshot_date
+        value='2026-05-28' expected='<= 2d old (ref=2026-06-02)'
+```
+
+Cada rechazo es trazable por source/field/value, en línea con §5.
+
 ---
 
 ## 5. Política de Logging
