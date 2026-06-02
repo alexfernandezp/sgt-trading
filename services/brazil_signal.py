@@ -30,12 +30,17 @@ def _fetch_yoy(session: Session) -> dict | None:
     Busca el ultimo dato disponible y el mismo fortnight_seq de la temporada anterior.
     Devuelve dict con cane_current, cane_prev, yoy_pct o None.
     """
+    # P3.E.4 — Lee *_cumulative (acumulado-a-quincena). YoY entre cumulativos
+    # de la misma fortnight_seq es semanticamente correcto (mide la diferencia
+    # acumulada-a-fecha-equivalente). PIT-aware: ORDER BY tambien report_issue_date
+    # DESC para captar siempre la revision MAPA mas reciente disponible.
     rows = session.execute(text("""
-        SELECT harvest_year, fortnight_seq, cane_crushed_t, sugar_t,
-               ethanol_total_m3, sugar_mix_pct, report_date
+        SELECT harvest_year, fortnight_seq,
+               cane_crushed_t_cumulative, sugar_t_cumulative,
+               ethanol_total_m3_cumulative, sugar_mix_pct, report_date
         FROM brazil_production
-        WHERE cane_crushed_t IS NOT NULL
-        ORDER BY report_date DESC
+        WHERE cane_crushed_t_cumulative IS NOT NULL
+        ORDER BY report_date DESC, report_issue_date DESC
         LIMIT 1
     """)).fetchall()
 
@@ -45,7 +50,7 @@ def _fetch_yoy(session: Session) -> dict | None:
     latest = rows[0]
     curr_year, curr_seq = latest[0], latest[1]
 
-    # Misma quincena del año anterior
+    # Misma quincena del año anterior — version PIT mas reciente disponible.
     prev_years = curr_year.split("-")
     try:
         prev_harvest = f"{int(prev_years[0])-1}-{int(prev_years[1])-1}"
@@ -53,9 +58,11 @@ def _fetch_yoy(session: Session) -> dict | None:
         return None
 
     prev_row = session.execute(text("""
-        SELECT cane_crushed_t, sugar_t, ethanol_total_m3, sugar_mix_pct
+        SELECT cane_crushed_t_cumulative, sugar_t_cumulative,
+               ethanol_total_m3_cumulative, sugar_mix_pct
         FROM brazil_production
         WHERE harvest_year = :hy AND fortnight_seq = :seq
+        ORDER BY report_issue_date DESC
         LIMIT 1
     """), {"hy": prev_harvest, "seq": curr_seq}).fetchone()
 

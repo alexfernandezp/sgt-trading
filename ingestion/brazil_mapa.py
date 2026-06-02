@@ -572,13 +572,17 @@ def _parse_xls(content: bytes, url: str, harvest_year: str) -> Optional[dict]:
         if not ok:
             return None  # discard fila completa — campo fuera de rango §3.2
 
+    # Dict keys casan con columnas *_cumulative del modelo (post-P3.E.1 PIT).
+    # *_net columns NO se rellenan aqui — el delta se calcula en P3.E.7 con
+    # visibilidad sobre la fila previa (cumulative[N-1]) que requiere PIT
+    # context (cual revision usar) — no es info que tengamos en este punto.
     return {
-        "cane_crushed_t":       cane,
-        "sugar_t":              sugar,
-        "ethanol_anhydrous_m3": anidro,
-        "ethanol_hydrated_m3":  hidrat,
-        "ethanol_total_m3":     etanol_total,
-        "sugar_mix_pct":        sugar_mix,
+        "cane_crushed_t_cumulative":       cane,
+        "sugar_t_cumulative":              sugar,
+        "ethanol_anhydrous_m3_cumulative": anidro,
+        "ethanol_hydrated_m3_cumulative":  hidrat,
+        "ethanol_total_m3_cumulative":     etanol_total,
+        "sugar_mix_pct":                   sugar_mix,
     }
 
 
@@ -586,17 +590,81 @@ def _parse_xls(content: bytes, url: str, harvest_year: str) -> Optional[dict]:
 # Upsert
 # ---------------------------------------------------------------------------
 
-def _upsert(session: Session, record: dict):
-    stmt = (
-        insert(BrazilProduction)
-        .values(**record)
-        .on_conflict_do_update(
-            constraint="uq_brazil_harvest_fortnight",
-            set_={k: v for k, v in record.items()
-                  if k not in ("harvest_year", "fortnight_seq")},
+def _insert_revision(session: Session, record: dict) -> str:
+    """
+    Insercion append-only PIT (P3.E.4).
+
+    A diferencia del legacy `_upsert`, NO machaca filas anteriores. Cada
+    revision MAPA produce una fila distinta identificada por uq_brazil_pit
+    (harvest_year, fortnight_seq, report_issue_date).
+
+    Flujo:
+      1. SELECT max(report_issue_date) para esta (harvest_year, fortnight_seq).
+      2. Comparar con record['report_issue_date']:
+         - sin existente            → 'first'    insert silencioso
+         - new > existing           → 'revision' insert + INFO production_revision_ingested
+         - new == existing          → 'duplicate' skip silencioso (idempotente)
+         - new < existing           → 'scope_drift' WARN + skip (publicacion fuera de orden)
+      3. INSERT puro contra uq_brazil_pit. Race condition: IntegrityError →
+         tratamos como 'duplicate' (otro proceso/run inserto la misma revision).
+
+    Returns:
+      Categoria del resultado: 'first' | 'revision' | 'duplicate' | 'scope_drift'.
+      El caller usa esto para contadores (n_revisions vs n_first vs n_skipped).
+    """
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy import select, func
+
+    hy   = record["harvest_year"]
+    seq  = record["fortnight_seq"]
+    new_issue = record["report_issue_date"]
+
+    # 1. SELECT pre-INSERT: ultima revision existente para (year, seq)
+    existing_issue = session.execute(
+        select(func.max(BrazilProduction.report_issue_date)).where(
+            BrazilProduction.harvest_year == hy,
+            BrazilProduction.fortnight_seq == seq,
         )
-    )
-    session.execute(stmt)
+    ).scalar()
+
+    # 2. Decidir categoria
+    if existing_issue is None:
+        category = "first"
+    elif new_issue > existing_issue:
+        category = "revision"
+        logger.info(
+            "production_revision_ingested | key=%s_%s issue=%s vs_old=%s",
+            hy, seq, new_issue, existing_issue,
+        )
+    elif new_issue == existing_issue:
+        return "duplicate"   # idempotencia: ya tenemos esta revision exacta
+    else:
+        # new < existing: el run actual procesa una revision MAS ANTIGUA que la
+        # ultima conocida. Posible reorden de publicacion MAPA o ingestion fuera
+        # de cronologia. NO insertamos para evitar manchar el PIT, WARN para
+        # auditoria.
+        logger.warning(
+            "brazil_mapa scope_drift | key=%s_%s new_issue=%s < existing=%s "
+            "(out-of-order revision), skipping insert",
+            hy, seq, new_issue, existing_issue,
+        )
+        return "scope_drift"
+
+    # 3. INSERT puro. IntegrityError = race condition (otro proceso ya inserto
+    #    misma triple unique). Tratamos como duplicate.
+    try:
+        stmt = insert(BrazilProduction).values(**record)
+        session.execute(stmt)
+    except IntegrityError:
+        session.rollback()
+        logger.info(
+            "production_revision_race | key=%s_%s issue=%s already present "
+            "(concurrent insert), treating as duplicate",
+            hy, seq, new_issue,
+        )
+        return "duplicate"
+
+    return category
 
 
 # ---------------------------------------------------------------------------
@@ -648,8 +716,10 @@ def fetch_brazil_production(
     seasons_sorted = sorted(seen_urls.items(), reverse=True)[:max_seasons]
     logger.info("Temporadas a procesar: %s", [s[0] for s in seasons_sorted])
 
-    inserted = 0
-    errors   = 0
+    inserted    = 0
+    n_revisions = 0
+    n_duplicates = 0
+    errors      = 0
     # P3.C — trackeo del structural success rate: solo XLS que DESCARGARON OK
     # cuentan como "attempted" (los HTTP fail no son problemas estructurales).
     n_xls_downloaded = 0
@@ -666,6 +736,7 @@ def fetch_brazil_production(
                 r = requests.get(xls_url, headers=HEADERS, timeout=60)
                 r.raise_for_status()
                 content = r.content
+                http_headers = dict(r.headers)
                 time.sleep(delay)
             except Exception as e:
                 logger.warning("    Error descargando %s: %s", xls_url, e)
@@ -686,19 +757,41 @@ def fetch_brazil_production(
 
             n_xls_parsed_ok += 1
             seq = _fortnight_seq(ref_date, harvest_year)
+
+            # P3.E.2/4 — Issue date + revision seq desde headers + filename
+            filename = xls_url.split("/")[-1]
+            issue_date, revision_seq = _extract_issue_date(http_headers, filename)
+
             record = {
-                "harvest_year":  harvest_year,
-                "fortnight_seq": seq,
-                "report_date":   ref_date,
-                "source_url":    xls_url,
+                "harvest_year":         harvest_year,
+                "fortnight_seq":        seq,
+                "report_date":          ref_date,
+                "report_issue_date":    issue_date,
+                "report_revision_seq":  revision_seq,
+                "source_url":           xls_url,
                 **parsed,
             }
 
             try:
-                _upsert(session, record)
-                inserted += 1
-                logger.info("    OK %s seq=%d cana=%s azucar=%s",
-                            ref_date, seq, parsed["cane_crushed_t"], parsed["sugar_t"])
+                category = _insert_revision(session, record)
+                if category == "first":
+                    inserted += 1
+                    logger.info(
+                        "    OK first %s seq=%d issue=%s rev=%d cana=%s azucar=%s",
+                        ref_date, seq, issue_date, revision_seq,
+                        parsed["cane_crushed_t_cumulative"],
+                        parsed["sugar_t_cumulative"],
+                    )
+                elif category == "revision":
+                    inserted   += 1
+                    n_revisions += 1
+                    logger.info(
+                        "    OK revision %s seq=%d issue=%s rev=%d",
+                        ref_date, seq, issue_date, revision_seq,
+                    )
+                elif category == "duplicate":
+                    n_duplicates += 1
+                # 'scope_drift' ya logueado dentro de _insert_revision
             except Exception as e:
                 logger.warning("    DB error %s: %s", xls_url, e)
                 session.rollback()
@@ -726,9 +819,11 @@ def fetch_brazil_production(
             structural_rate = rate
 
     return {
-        "inserted": inserted,
-        "errors": errors,
-        "seasons": processed_seasons,
+        "inserted":         inserted,
+        "errors":           errors,
+        "seasons":          processed_seasons,
+        "n_revisions":      n_revisions,   # P3.E.4 — filas insertadas como revision
+        "n_duplicates":     n_duplicates,  # P3.E.4 — skips por idempotencia
         "n_xls_downloaded": n_xls_downloaded,
         "n_xls_parsed_ok":  n_xls_parsed_ok,
         "structural_rate":  structural_rate,
@@ -755,11 +850,17 @@ def get_latest_production(
                   Inyectable para testing.
     """
     from sqlalchemy import text
+    # P3.E.4 — lee cumulative columns (lo que MAPA emite). PIT-aware DISTINCT ON
+    # (year, seq) con ORDER BY issue_date DESC viene en P3.E.5. Por ahora cada
+    # revision genera una fila distinta — irrelevante mientras todas las filas
+    # legacy tienen revision_seq=1 e issue_date=report_date (backfill prudente).
     rows = session.execute(text("""
         SELECT report_date, harvest_year, fortnight_seq,
-               cane_crushed_t, sugar_t, ethanol_total_m3, sugar_mix_pct
+               cane_crushed_t_cumulative, sugar_t_cumulative,
+               ethanol_total_m3_cumulative, sugar_mix_pct,
+               report_issue_date, report_revision_seq
         FROM brazil_production
-        ORDER BY report_date DESC
+        ORDER BY report_date DESC, report_issue_date DESC
         LIMIT :n
     """), {"n": n}).fetchall()
 
@@ -779,15 +880,21 @@ def get_latest_production(
     if not fresh:
         return []
 
+    # Backward-compat: las claves del dict de salida MANTIENEN los nombres
+    # legacy (cane_crushed_t, sugar_t, ethanol_total_m3) que consume el
+    # downstream (services/brazil_signal.py, world_balance_model, etc).
+    # Internamente leen siempre los valores cumulative — semantica preservada.
     return [
         {
-            "report_date":    str(r[0]),
-            "harvest_year":   r[1],
-            "fortnight_seq":  r[2],
-            "cane_crushed_t": float(r[3]) if r[3] else None,
-            "sugar_t":        float(r[4]) if r[4] else None,
-            "ethanol_total_m3": float(r[5]) if r[5] else None,
-            "sugar_mix_pct":  float(r[6]) if r[6] else None,
+            "report_date":         str(r[0]),
+            "harvest_year":        r[1],
+            "fortnight_seq":       r[2],
+            "cane_crushed_t":      float(r[3]) if r[3] else None,
+            "sugar_t":             float(r[4]) if r[4] else None,
+            "ethanol_total_m3":    float(r[5]) if r[5] else None,
+            "sugar_mix_pct":       float(r[6]) if r[6] else None,
+            "report_issue_date":   str(r[7]),
+            "report_revision_seq": r[8],
         }
         for r in rows
     ]

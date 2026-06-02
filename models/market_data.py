@@ -116,25 +116,51 @@ class OptionsData(Base):
 
 class BrazilProduction(Base):
     """
-    Produccion sucroalcooleira de Brasil (MAPA) por quincena.
-    Fuente: MAPA — Acompanhamento da Producao Sucroalcooleira.
-    Fila nacional: "Tot.g" del XLS.
+    Produccion sucroalcooleira de Brasil (MAPA) por quincena — Point-in-Time.
+
+    Tras la migracion PIT (P3.E.1, commit 4b57e0a) la tabla almacena dos series
+    paralelas:
+      - *_cumulative : acumulado de safra a cierre de quincena (materia prima MAPA)
+      - *_net        : delta quincenal derivado (cumulative[N] - cumulative[N-1])
+
+    PIT semantics: cada quincena puede tener MULTIPLES filas (una por revision
+    MAPA) distinguidas por report_issue_date. UNIQUE (harvest_year,
+    fortnight_seq, report_issue_date) garantiza append-only sin overwrite.
+
+    Ver BUSINESS_LOGIC §3.2 (rangos cumulative/net) y §4.1 (read-side PIT).
     """
     __tablename__ = "brazil_production"
     id                  = Column(Integer, primary_key=True)
-    report_date         = Column(Date, nullable=False)    # fecha aproximada de referencia
+    report_date         = Column(Date, nullable=False)         # fecha de la QUINCENA
     harvest_year        = Column(String(10), nullable=False)   # ej. "2025-2026"
-    fortnight_seq       = Column(Integer)                 # quincena acumulada del año cosecha (1,2,…26)
-    cane_crushed_t      = Column(Numeric(18, 0))
-    sugar_t             = Column(Numeric(18, 0))
-    ethanol_anhydrous_m3 = Column(Numeric(18, 0))
-    ethanol_hydrated_m3  = Column(Numeric(18, 0))
-    ethanol_total_m3    = Column(Numeric(18, 0))
-    sugar_mix_pct       = Column(Numeric(6, 3))           # azucar / (azucar+etanol equivalente)
+    fortnight_seq       = Column(Integer)                      # quincena del ano cosecha (1..26)
+
+    # PIT timestamps (P3.E.1)
+    report_issue_date   = Column(Date, nullable=False)         # fecha de EMISION del reporte
+    report_revision_seq = Column(Integer, default=1)           # _N del filename, default 1
+
+    # Cumulative columns (materia prima MAPA, write-side de _parse_xls)
+    cane_crushed_t_cumulative       = Column(Numeric(18, 0))
+    sugar_t_cumulative              = Column(Numeric(18, 0))
+    ethanol_anhydrous_m3_cumulative = Column(Numeric(18, 0))
+    ethanol_hydrated_m3_cumulative  = Column(Numeric(18, 0))
+    ethanol_total_m3_cumulative     = Column(Numeric(18, 0))
+
+    # Net columns (delta quincenal, rellenado por P3.E.7)
+    cane_crushed_t_net       = Column(Numeric(18, 0))
+    sugar_t_net              = Column(Numeric(18, 0))
+    ethanol_anhydrous_m3_net = Column(Numeric(18, 0))
+    ethanol_hydrated_m3_net  = Column(Numeric(18, 0))
+    ethanol_total_m3_net     = Column(Numeric(18, 0))
+
+    sugar_mix_pct       = Column(Numeric(6, 3))                # azucar / (azucar + etanol_equiv)
     source_url          = Column(String(500))
     created_at          = Column(DateTime, default=datetime.utcnow)
     __table_args__ = (
-        UniqueConstraint("harvest_year", "fortnight_seq", name="uq_brazil_harvest_fortnight"),
+        UniqueConstraint(
+            "harvest_year", "fortnight_seq", "report_issue_date",
+            name="uq_brazil_pit",
+        ),
     )
 
 

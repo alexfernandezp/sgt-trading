@@ -35,6 +35,7 @@ from ingestion.brazil_mapa import (
     MAPA_STRUCTURAL_MIN_SUCCESS_RATE,
     _extract_issue_date,
     _fortnight_seq,
+    _insert_revision,
     _parse_date_from_url,
     _parse_revision_seq,
     _parse_xls,
@@ -42,6 +43,7 @@ from ingestion.brazil_mapa import (
     get_latest_production,
 )
 from services.data_quality import DataQualityError, validate_count
+from sqlalchemy.exc import IntegrityError
 
 
 # ── WARNING capture ──────────────────────────────────────────────────────
@@ -190,7 +192,7 @@ with _patch_workbook(grid):
     out = _parse_xls(b"fake", "https://x/test.xls", "2025-2026")
 # Debe parsear OK con sugar=None
 report("Sugar='' (vacio) → _parse_xls retorna dict",
-       out is not None and out.get("sugar_t") is None)
+       out is not None and out.get("sugar_t_cumulative") is None)
 report("sin WARN para celda vacia (legitimo silencio)",
        not any("_num" in m for _, _, m in captured))
 
@@ -212,7 +214,7 @@ with _patch_workbook(_make_mapa_grid(cane=400_000_000, sugar=25_000_000,
                                        etanol=20_000_000)):
     out = _parse_xls(b"f", "https://x/ok.xls", "2025-2026")
 report("baseline cumulative (cane=400M) → dict retornado",
-       out is not None and out.get("cane_crushed_t") == 400_000_000)
+       out is not None and out.get("cane_crushed_t_cumulative") == 400_000_000)
 
 # Cane out of cumulative range (>700M)
 captured.clear()
@@ -268,7 +270,7 @@ with _patch_workbook(_make_mapa_grid(cane=700_000_000, sugar=35_000_000,
                                        etanol=30_000_000)):
     out = _parse_xls(b"f", "https://x/boundary.xls", "2025-2026")
 report("cane=700M boundary cumulative (==max) → ACEPTADO",
-       out is not None and out.get("cane_crushed_t") == 700_000_000)
+       out is not None and out.get("cane_crushed_t_cumulative") == 700_000_000)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -333,15 +335,19 @@ class _StubSession:
     def execute(self, _stmt, _params=None): return _ExecResult(self._rows)
 
 
-def _mapa_row(days_old: int):
+def _mapa_row(days_old: int, revision_seq: int = 1):
     """
-    Row shape de get_latest_production:
+    Row shape post-P3.E.4 de get_latest_production:
       (report_date, harvest_year, fortnight_seq,
-       cane, sugar, ethanol_total, sugar_mix)
+       cane_cumulative, sugar_cumulative, ethanol_total_cumulative,
+       sugar_mix_pct, report_issue_date, report_revision_seq)
     """
+    d = TODAY - timedelta(days=days_old)
     return (
-        TODAY - timedelta(days=days_old),
-        "2025-2026", 5, 40_000_000, 2_000_000, 1_500_000, 47.5,
+        d, "2025-2026", 5,
+        400_000_000, 25_000_000, 20_000_000,  # mid-season cumulative values
+        47.5,
+        d, revision_seq,
     )
 
 
@@ -499,6 +505,152 @@ issue_date, rev = _extract_issue_date(
 )
 report("revision_seq=3 incluso con fallback en issue_date",
        rev == 3 and issue_date == TODAY)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# P3.E.4 — _insert_revision append-only + INFO log
+# ─────────────────────────────────────────────────────────────────────────
+print("\n=== P3.E.4 — _insert_revision append-only + INFO log ===")
+
+
+class _InsertStub:
+    """
+    Stub completo de sqlalchemy Session para tests de _insert_revision.
+
+    Soporta dos shapes de session.execute:
+      - execute(select(...)).scalar() → retorna self._existing_issue
+      - execute(insert(...))         → registra el INSERT y opcionalmente
+                                         lanza IntegrityError
+
+    Tracking:
+      n_inserts        — INSERT statements ejecutados
+      n_selects        — SELECT statements ejecutados
+    """
+    def __init__(self, existing_issue=None, *, raise_integrity=False):
+        self._existing_issue = existing_issue
+        self._raise_integrity = raise_integrity
+        self.n_inserts = 0
+        self.n_selects = 0
+
+    def execute(self, stmt):
+        # Heuristica simple: si compila como SELECT → SELECT; si no, INSERT
+        sql_text = str(stmt).lower()
+        if "select" in sql_text and "max(" in sql_text:
+            self.n_selects += 1
+            return _InsertStubResult(self._existing_issue)
+        # INSERT path
+        if self._raise_integrity:
+            raise IntegrityError("stub", "stub", Exception("uq_brazil_pit"))
+        self.n_inserts += 1
+        return _InsertStubResult(None)
+
+    def rollback(self):
+        pass
+
+    def commit(self):
+        pass
+
+
+class _InsertStubResult:
+    def __init__(self, scalar_val): self._scalar = scalar_val
+    def scalar(self): return self._scalar
+
+
+# Captura INFO logs (no solo WARNING) para verificar production_revision_ingested
+class _InfoCap(logging.Handler):
+    def emit(self, record):
+        captured.append((record.levelno, record.name, record.getMessage()))
+
+
+_info_handler = _InfoCap()
+logging.getLogger("ingestion.brazil_mapa").addHandler(_info_handler)
+logging.getLogger("ingestion.brazil_mapa").setLevel(logging.INFO)
+
+
+def _make_record(issue: date, harvest="2025-2026", seq=10):
+    return {
+        "harvest_year":        harvest,
+        "fortnight_seq":       seq,
+        "report_date":         issue,
+        "report_issue_date":   issue,
+        "report_revision_seq": 1,
+        "source_url":          "https://x/test.xls",
+        "cane_crushed_t_cumulative":       400_000_000,
+        "sugar_t_cumulative":              25_000_000,
+        "ethanol_anhydrous_m3_cumulative": 10_000_000,
+        "ethanol_hydrated_m3_cumulative":  10_000_000,
+        "ethanol_total_m3_cumulative":     20_000_000,
+        "sugar_mix_pct":                   47.5,
+    }
+
+
+# Caso 1: existing=None → first insert, sin INFO de revision
+captured.clear()
+stub = _InsertStub(existing_issue=None)
+cat = _insert_revision(stub, _make_record(date(2026, 5, 22)))
+report("primera fila (existing=None) → categoria 'first'", cat == "first")
+report("INSERT ejecutado", stub.n_inserts == 1)
+report("NO log de revision para first",
+       not any("production_revision_ingested" in m for _, _, m in captured))
+
+
+# Caso 2: new > existing → revision detectada + INFO log
+captured.clear()
+stub = _InsertStub(existing_issue=date(2026, 5, 22))
+cat = _insert_revision(stub, _make_record(date(2026, 5, 29)))
+report("new=2026-05-29 > existing=2026-05-22 → 'revision'", cat == "revision")
+report("INSERT ejecutado", stub.n_inserts == 1)
+info_revs = [(lv, m) for lv, _, m in captured
+             if "production_revision_ingested" in m]
+report("INFO production_revision_ingested emitido",
+       len(info_revs) == 1, f"got {len(info_revs)}")
+report("INFO log incluye key=2025-2026_10",
+       any("2025-2026_10" in m for _, m in info_revs))
+report("INFO log incluye issue=2026-05-29",
+       any("2026-05-29" in m for _, m in info_revs))
+report("INFO log incluye vs_old=2026-05-22",
+       any("vs_old=2026-05-22" in m for _, m in info_revs))
+
+
+# Caso 3: new == existing → duplicate (idempotencia, no insert)
+captured.clear()
+stub = _InsertStub(existing_issue=date(2026, 5, 22))
+cat = _insert_revision(stub, _make_record(date(2026, 5, 22)))
+report("new == existing → 'duplicate'", cat == "duplicate")
+report("NO INSERT ejecutado (idempotente)", stub.n_inserts == 0)
+report("sin INFO de revision",
+       not any("production_revision_ingested" in m for _, _, m in captured))
+
+
+# Caso 4: new < existing → scope_drift (publicacion fuera de orden)
+captured.clear()
+stub = _InsertStub(existing_issue=date(2026, 5, 22))
+cat = _insert_revision(stub, _make_record(date(2026, 5, 15)))
+report("new < existing → 'scope_drift'", cat == "scope_drift")
+report("NO INSERT ejecutado (proteccion PIT)", stub.n_inserts == 0)
+report("WARN scope_drift emitido",
+       any(lv == logging.WARNING and "scope_drift" in m
+           for lv, _, m in captured))
+
+
+# Caso 5: IntegrityError en INSERT (race condition) → tratado como duplicate
+captured.clear()
+stub = _InsertStub(existing_issue=None, raise_integrity=True)
+cat = _insert_revision(stub, _make_record(date(2026, 5, 29)))
+report("IntegrityError en INSERT → 'duplicate' (race)", cat == "duplicate")
+report("INFO production_revision_race emitido",
+       any("production_revision_race" in m for _, _, m in captured))
+
+
+# Caso 6: distintos fortnight_seq son independientes — cada uno con su existing
+captured.clear()
+stub = _InsertStub(existing_issue=None)
+cat = _insert_revision(stub, _make_record(date(2026, 5, 22), seq=10))
+report("seq=10 first → 'first'", cat == "first")
+
+stub = _InsertStub(existing_issue=date(2026, 5, 22))
+cat = _insert_revision(stub, _make_record(date(2026, 5, 29), seq=10))
+report("seq=10 revision (new > existing) → 'revision'", cat == "revision")
 
 
 # ─────────────────────────────────────────────────────────────────────────
