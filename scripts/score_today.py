@@ -744,7 +744,7 @@ def print_brazil_signal(brazil):
         yoy_tag = "↑ MAYOR oferta → presion SHORT" if yoy > 2 else ("↓ MENOR oferta → sesgo LONG" if yoy < -2 else "neutral")
         print("  YoY caña     : %+.1f%%  %s" % (yoy, yoy_tag))
     if mix is not None:
-        mix_tag = "más azúcar exportable → presion SHORT" if mix > 45 else "más etanol → menos azúcar disponible → sesgo LONG"
+        mix_tag = "mas azucar exportable -> presion SHORT" if mix > 45 else "mas etanol -> menos azucar disponible -> sesgo LONG"
         print("  Mix azucar   : %.1f%%  %s" % (mix, mix_tag))
 
     bar_pos = int((sig + 1) / 2 * 20)
@@ -1523,14 +1523,6 @@ def run():
 
     print_layer1(scores_l, scores_r, inputs)
 
-    # A4: señal fundamental Brasil (MAPA bi-weekly)
-    try:
-        brazil = compute_brazil_signal(session)
-    except Exception as e:
-        logger.debug("brazil_signal error: %s", e)
-        brazil = None
-    print_brazil_signal(brazil)
-
     # Macro intraday: BRL/USD + Brent + correlación (dirección sugerida por L1)
     l1_l_sum = _layer_sum(scores_l, LAYER1_KEYS)
     l1_r_sum = _layer_sum(scores_r, LAYER1_KEYS)
@@ -1690,13 +1682,6 @@ def run():
             print(format_ic_summary(ic_result))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
             print("  [!] Macro contradice la direccion — BRL/Brent/Paridad en contra")
-    if brazil:
-        a4_bias = brazil.get("bias", "NEUTRAL")
-        a4_sig  = brazil.get("signal_a4", 0)
-        print("  Brasil A4  : %s (A4=%+.2f)  %s" % (
-            a4_bias, a4_sig, brazil.get("description", "")))
-        if a4_bias != "NEUTRAL" and a4_bias != direction and direction != "NEUTRAL":
-            print("  [!] Señal Brasil contradice la direccion - revisar fundamental")
     if santos_signal:
         a5_bias = santos_signal.get("bias", "NEUTRAL")
         a5_sig  = santos_signal.get("signal_a5", 0)
@@ -1826,6 +1811,17 @@ def run():
             print("\n  [!] No se pudo calcular el setup (datos insuficientes)")
     else:
         print()
+
+    # ── Contexto mensual (no afecta scoring diario) ───────────────────────────
+    print()
+    print("=" * 72)
+    print("  CONTEXTO MENSUAL / QUINCENAL  (informativo — no scoring diario)")
+    print("=" * 72)
+    try:
+        brazil = compute_brazil_signal(session)
+        print_brazil_signal(brazil)
+    except Exception as e:
+        logger.debug("brazil_signal error: %s", e)
 
     session.close()
 

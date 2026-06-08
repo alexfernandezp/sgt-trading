@@ -83,10 +83,11 @@ def _fetch_yoy(session: Session) -> dict | None:
 def compute_brazil_signal(session: Session) -> dict | None:
     """
     Calcula la senal fundamental A4 basada en datos MAPA.
+    Uso: pipeline mensual/quincenal — no score diario.
 
     Devuelve:
       signal_a4    : float en [-1, +1]  (+1 = muy alcista)
-      signal_a4a   : sub-senal YoY caña
+      signal_a4a   : sub-senal YoY cana
       signal_a4b   : sub-senal mix azucar/etanol
       bias         : "LONG" / "SHORT" / "NEUTRAL"
       description  : texto para el score card

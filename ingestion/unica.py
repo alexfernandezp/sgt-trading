@@ -61,12 +61,14 @@ def _pt_float(s: str) -> float:
 
 
 def scrape_latest_idm() -> Optional[int]:
-    """Obtiene el ID del documento mas reciente del reporte quinzenal."""
+    """Obtiene el ID del documento mas reciente del reporte quinzenal.
+    Toma el idM MAS ALTO de la pagina (no el primero) porque el ID numerico
+    es incremental — el mayor siempre es el mas reciente."""
     try:
         r = httpx.get(_LISTAGEM_URL, headers=_HEADERS, timeout=20, follow_redirects=True)
-        m = re.search(r"download_media\.php\?idM=(\d+)", r.text)
-        if m:
-            return int(m.group(1))
+        matches = re.findall(r"download_media\.php\?idM=(\d+)", r.text)
+        if matches:
+            return max(int(m) for m in matches)
         logger.warning("UNICA: no se encontro idM en %s", _LISTAGEM_URL)
     except Exception as e:
         logger.warning("UNICA scrape idM: %s", e)
