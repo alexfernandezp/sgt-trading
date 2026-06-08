@@ -430,16 +430,19 @@ def print_layer2(l2l, l2r, vp_dict, price, inputs=None, vwap_data=None):
                     pos = "DENTRO OR (indecision)"
                 detail = "  OR=[%.4f - %.4f]  precio=%.4f  %s" % (or_lo, or_hi, price, pos)
         elif key == "vwap_touch":
-            td = l2l.get("_touch_data") or {}
-            if td.get("level_name"):
-                rej   = td.get("rejection_prob")
-                n_h   = td.get("n_hist", 0)
-                n_t   = td.get("touches_today", 0)
-                wick  = "mecha=SI" if td.get("wick_rejection") else "mecha=no"
-                vold  = "vol=v" if td.get("vol_declining") else "vol=-"
-                rej_s = ("%.0f%%(N=%d)" % (rej * 100, n_h)) if rej is not None else "N/D"
-                detail = "  %s  toques=%d  rechazo_hist=%s  %s  %s" % (
-                    td["level_name"], n_t, rej_s, wick, vold)
+            # Mostrar datos del nivel SHORT (resistencia) y LONG (soporte) juntos
+            td_l = l2l.get("_touch_data") or {}
+            td_r = l2r.get("_touch_data") or {}
+            td_primary = td_r if td_r.get("n_rejected", 0) >= td_l.get("n_rejected", 0) else td_l
+            if td_primary.get("level_name"):
+                n_rej = td_primary.get("n_rejected", 0)
+                n_tst = td_primary.get("n_tested", 0)
+                rate  = td_primary.get("rejection_rate")
+                n_opp = td_primary.get("opposing_rejected", 0)
+                n_t   = td_primary.get("touches_today", 0)
+                rate_s = ("%.0f%% (%d/%d ses)" % (rate * 100, n_rej, n_tst)) if rate is not None else "N/D"
+                dom_s  = "  opp=%d" % n_opp if n_opp > 0 else ""
+                detail = "  %s  rechaz=%s%s  hoy=%d" % (td_primary["level_name"], rate_s, dom_s, n_t)
         elif key == "swing_structure":
             ms = l2l.get("_ms_data") or {}
             if ms.get("pattern_15m"):
