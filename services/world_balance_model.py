@@ -1363,7 +1363,11 @@ def compute_sgt_balance(session,
         try:
             wb = get_world_balance(session)
             marketing_year = wb.get("marketing_year") if wb else ref.year
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "compute_sgt_balance: get_world_balance falló — fallback year=%d: %s",
+                ref.year, exc,
+            )
             marketing_year = ref.year
 
     # ── 3. Weight Drift ───────────────────────────────────────────────────

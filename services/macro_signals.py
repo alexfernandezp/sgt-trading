@@ -88,8 +88,8 @@ def _fetch_last_price(ticker: str) -> Optional[float]:
             price = getattr(fi, "last_price", None) or getattr(fi, "regular_market_price", None)
             if price and float(price) > 0:
                 return float(price)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("fetch_last_price fast_info %s: %s", ticker, exc)
 
         # 2. Intraday 1m / 5m
         for iv in ("1m", "5m"):
@@ -101,7 +101,8 @@ def _fetch_last_price(ticker: str) -> Optional[float]:
                     val = df["Close"].dropna()
                     if len(val) > 0:
                         return float(val.iloc[-1])
-            except Exception:
+            except Exception as exc:
+                logger.debug("fetch_last_price intraday %s %s: %s", ticker, iv, exc)
                 continue
 
     except Exception as e:

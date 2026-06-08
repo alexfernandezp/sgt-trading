@@ -68,6 +68,13 @@ def fetch_prices(session: Session, instruments=None, days_back: int = 30) -> dic
             )
             session.execute(stmt)
             session.commit()
+            latest_day = max(r["date"] for r in rows)
+            age = (end - latest_day).days
+            if age > 1:
+                logger.warning(
+                    "prices %s: último dato %s (%d días de retraso) — posible fallo de fuente",
+                    name, latest_day, age,
+                )
         results[name] = len(rows)
         logger.info(f"{name}: {len(rows)} filas")
     return results
