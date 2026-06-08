@@ -15,10 +15,24 @@ Score combinado A4: promedio ponderado A4a(60%) + A4b(40%).
 Rango: -1 (muy bajista) → +1 (muy alcista).
 """
 import logging
+from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+
+def _current_safra() -> str:
+    """
+    Safra Centro-Sul activa basada en la fecha.
+    Abr-Dic del año Y → safra "Y-{Y+1}"
+    Ene-Mar del año Y → safra "{Y-1}-Y"
+    """
+    today = date.today()
+    y = today.year
+    if today.month >= 4:
+        return "%d-%d" % (y, y + 1)
+    return "%d-%d" % (y - 1, y)
 
 SUGAR_MIX_NEUTRAL   = 45.0   # % — benchmark historico
 SUGAR_MIX_RANGE     = 10.0   # +/- % para saturacion de la senal
@@ -34,15 +48,21 @@ def _fetch_yoy(session: Session) -> dict | None:
     # de la misma fortnight_seq es semanticamente correcto (mide la diferencia
     # acumulada-a-fecha-equivalente). PIT-aware: ORDER BY tambien report_issue_date
     # DESC para captar siempre la revision MAPA mas reciente disponible.
+    safra = _current_safra()
     rows = session.execute(text("""
         SELECT harvest_year, fortnight_seq,
                cane_crushed_t_cumulative, sugar_t_cumulative,
                ethanol_total_m3_cumulative, sugar_mix_pct, report_date
         FROM brazil_production
         WHERE cane_crushed_t_cumulative IS NOT NULL
+          AND harvest_year = :safra
         ORDER BY report_date DESC, report_issue_date DESC
         LIMIT 1
-    """)).fetchall()
+    """), {"safra": safra}).fetchall()
+
+    if not rows:
+        logger.info("brazil_signal: sin datos MAPA para safra %s aun", safra)
+        return None
 
     if not rows:
         return None

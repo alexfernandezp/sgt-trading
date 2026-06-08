@@ -324,19 +324,35 @@ def get_vol_surface_for_score(spot: float) -> dict:
     rr25  = front.get("rr25")
     mp    = front.get("max_pain")
 
-    # C3 LONG: pc_oi > 1.1 (más puts que calls = cobertura bajista ya en precio) + price > max_pain
-    # C3 SHORT: pc_oi < 0.9 (especulacion call dominante) + price < max_pain
+    # C3 — MaxPain como señal principal (gravedad del mercado de opciones).
+    # El precio gravita hacia MaxPain en el vencimiento porque los market makers
+    # de opciones tienen incentivo de neutralizar su delta llevando el precio ahí.
+    #
+    # LONG  [OK]: precio < MaxPain  (tiro gravitacional hacia ARRIBA)
+    #             Confirmación: P/C > 1.2 (puts pesadas = posible squeeze alcista)
+    # SHORT [OK]: precio > MaxPain  (tiro gravitacional hacia ABAJO)
+    #             Confirmación: P/C < 0.85 (calls dominan = crowded long vulnerable)
+    #
+    # Si precio está dentro de ±0.15 del MaxPain: zona de equilibrio → 0 para ambos.
+    # Señal mutuamente exclusiva: nunca [OK] en las dos direcciones simultáneamente.
     def _c3(direction, price):
-        if pc_oi is None:
-            return None
+        if mp is None:
+            # Sin MaxPain: usar solo P/C como fallback estricto
+            if pc_oi is None:
+                return None
+            if direction == "LONG":
+                return 1 if pc_oi < 0.85 else 0   # más calls = momentum alcista
+            else:
+                return 1 if pc_oi > 1.20 else 0   # más puts = bearish sentiment
+
+        dead_zone = 0.15                         # c/lb de zona muerta alrededor del MaxPain
+        below_mp  = price < (mp - dead_zone)     # precio claramente bajo MaxPain
+        above_mp  = price > (mp + dead_zone)     # precio claramente sobre MaxPain
+
         if direction == "LONG":
-            oi_ok = pc_oi >= 1.1   # mucho put OI = el mercado ya está cubierto al borde → rebote
-            mp_ok = (mp is None) or (price > mp)   # precio sobre max pain = momentum alcista
-            return 1 if (oi_ok or mp_ok) else 0
+            return 1 if below_mp else 0
         else:
-            oi_ok = pc_oi <= 0.90  # calls dominan = complacencia → SHORT
-            mp_ok = (mp is None) or (price < mp)
-            return 1 if (oi_ok or mp_ok) else 0
+            return 1 if above_mp else 0
 
     surf["c3_long"]  = _c3("LONG",  spot)
     surf["c3_short"] = _c3("SHORT", spot)

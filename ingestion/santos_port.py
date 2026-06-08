@@ -327,6 +327,17 @@ def fetch_santos_port(session: Session) -> dict:
     result["n_berthed"]       = len(result["berthed"])
     result["tonnage_berthed"] = sum((s.get("load_qty_t") or 0) for s in result["berthed"])
 
+    # Detectar partidas automáticamente después de cada scrape
+    try:
+        from services.santos_exports import process_departures
+        new_deps = process_departures(session, reference_date=today)
+        if new_deps:
+            logger.info("Santos: %d nueva(s) partida(s) registrada(s)", len(new_deps))
+        result["new_departures"] = new_deps
+    except Exception as _e:
+        logger.warning("santos_exports.process_departures: %s", _e)
+        result["new_departures"] = []
+
     return result
 
 

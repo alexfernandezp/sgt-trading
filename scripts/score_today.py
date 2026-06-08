@@ -21,9 +21,6 @@ from services.market_structure import compute_market_structure
 from services.brazil_signal import compute_brazil_signal
 from services.macro_signals import compute_macro_signals
 from services.options_surface import get_vol_surface_for_score
-from services.santos_signal import compute_santos_signal
-from services.paranagua_signal import compute_paranagua_signal
-from ingestion.santos_port import get_latest_snapshot
 from ingestion.intraday import fetch_intraday
 from ingestion.options import score_options, get_latest_files
 from services.signal_logger import log_signals
@@ -718,7 +715,8 @@ def print_entry_zone(ez):
 def print_brazil_signal(brazil):
     """Muestra señal fundamental A4 — produccion sucroalcooleira MAPA Brasil."""
     if not brazil:
-        print("\n  A4 Brasil MAPA: sin datos (ejecutar ingestion/brazil_mapa.py)")
+        from services.brazil_signal import _current_safra
+        print("\n  A4 Brasil MAPA: sin datos safra %s — ejecutar ingestion/brazil_mapa.py" % _current_safra())
         return
 
     data   = brazil.get("data", {})
@@ -1557,23 +1555,8 @@ def run():
         macro = None
     print_macro_signals(macro, l1_dir_hint)
 
-    # A5: cola de exportación azúcar en Puerto de Santos
-    try:
-        santos_snap   = get_latest_snapshot(session)
-        santos_signal = compute_santos_signal(session, santos_snap)
-    except Exception as e:
-        logger.debug("santos_signal error: %s", e)
-        santos_snap   = None
-        santos_signal = None
-    print_santos_signal(santos_signal, santos_snap)
-
-    # A6: cola de exportación azúcar en Puerto de Paranaguá
-    try:
-        paranagua_signal = compute_paranagua_signal(session)
-    except Exception as e:
-        logger.debug("paranagua_signal error: %s", e)
-        paranagua_signal = None
-    print_paranagua_signal(paranagua_signal)
+    # Santos y Paranaguá: solo se usan en el CONTEXTO MENSUAL (flujo exportador)
+    # No como señales de dirección de precio intraday.
 
     # [2] Layer 2: VP + VWAP + señales auto
     print("\n[2/5] CAPA 2 - Ejecucion intradiaria (VP + VWAP + swing + volumen)...")
@@ -1655,7 +1638,7 @@ def run():
     # Log señales del día (antes de la decisión final)
     try:
         from datetime import date as _date
-        n_logged = log_signals(session, _date.today(), inputs, brazil, macro, santos_signal)
+        n_logged = log_signals(session, _date.today(), inputs, None, macro, None)
         logger.debug("signal_logger: %d señales guardadas", n_logged)
     except Exception as _e:
         logger.debug("signal_logger error (no critico): %s", _e)
@@ -1701,19 +1684,19 @@ def run():
         print("               BRL=%s  Brent=%s  Paridad=%s  ENSO=%s  Clima=%s  Carry=%s%s" % (
             brl_d, brt_d, par_d, enso_d, clim_d, carr_d, sp_s))
         print("               USDA=%s%s  DXY=%s" % (usda_d, stu_s, dxy_d))
-        if ic_result:
+        if ic_result and ic_result.get("n_calibrated", 0) >= 10:
             print(format_ic_summary(ic_result))
         if mb not in ("NEUTRAL",) and "CONTRA" in mb and direction != "NEUTRAL":
             print("  [!] Macro contradice la direccion — BRL/Brent/Paridad en contra")
-    if santos_signal:
-        a5_bias = santos_signal.get("bias", "NEUTRAL")
-        a5_sig  = santos_signal.get("signal_a5", 0)
-        n_tot   = santos_signal.get("n_ships", 0)
-        z_val   = santos_signal.get("z_combined") or 0
-        print("  Santos A5  : %s (A5=%+.2f  z=%.2f  %d barcos ACUCAR)" % (
-            a5_bias, a5_sig, z_val, n_tot))
-        if a5_bias != "NEUTRAL" and a5_bias != direction and direction != "NEUTRAL":
-            print("  [!] Santos contradice la direccion - revisar flujo físico")
+        # Brent regime alert en decision combinada
+        br = macro.get("brent_regime", {})
+        if br.get("regime") == "HIGH" and br.get("alert"):
+            b1d_v = macro.get("brent", {}).get("change_1d_pct") or 0
+            adir  = br.get("alert_direction", "")
+            trade_dir = "SHORT" if "BEARISH" in adir else ("LONG" if "BULLISH" in adir else "")
+            conf_s = "CONFIRMA %s" % direction if trade_dir == direction else ("CONTRADICE %s" % direction if trade_dir and trade_dir != direction else "")
+            print("  [!] BRENT REGIMEN HIGH (corr=%.0f%% pctil): Brent %+.1f%% hoy — %s  %s" % (
+                br.get("corr_percentile", 0), b1d_v, adir.replace("_", " "), conf_s))
     # Gate preview: mostrar estado antes de pedir confirmacion
     if direction not in ("NEUTRAL", None):
         _gb, _gs, _gl, _gm = _vwap_gate(vwap_data, direction)
@@ -1861,6 +1844,14 @@ def run():
         print_brazil_signal(brazil)
     except Exception as e:
         logger.debug("brazil_signal error: %s", e)
+
+    # Flujo exportador Santos (acumulado diario → semanal → mensual)
+    try:
+        from services.santos_exports import format_export_context
+        for line in format_export_context(session):
+            print(line)
+    except Exception as _e:
+        logger.debug("santos_exports context: %s", _e)
 
     session.close()
 

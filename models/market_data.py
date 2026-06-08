@@ -217,6 +217,30 @@ class SantosPortSnapshot(Base):
     )
 
 
+class SantosDeparture(Base):
+    """
+    Evento de partida de barco azucarero de Santos.
+    Un registro por barco que completó carga y zarpó.
+    Detectado comparando berthed list de snapshots consecutivos.
+    """
+    __tablename__ = "santos_departures"
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    ship_name     = Column(String(100), nullable=False)
+    terminal      = Column(String(100), nullable=False, default="")
+    cargo         = Column(String(100))
+    sugar_tonnes  = Column(Integer)          # load_qty_t del último snapshot berthed
+    first_seen    = Column(Date)             # primer día visto en berthed
+    last_seen     = Column(Date, nullable=False)   # último día confirmado en berthed
+    departed_date = Column(Date, nullable=False)   # día detectada la partida
+    voyage        = Column(String(50))
+    duv           = Column(String(20))
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("ship_name", "terminal", "departed_date",
+                         name="uq_santos_departure"),
+    )
+
+
 class CalendarEvent(Base):
     __tablename__ = "calendar_events"
     id             = Column(Integer, primary_key=True)
