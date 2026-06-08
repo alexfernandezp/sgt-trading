@@ -1503,6 +1503,26 @@ def run():
 
     session = SessionLocal()
 
+    # [UNICA] Evento quinzenal + ventana de leakage
+    try:
+        from services.unica_event import check_unica_event, check_leakage_window
+        _unica_ev = check_unica_event()
+        _leakage  = check_leakage_window()
+
+        # Reporte nuevo: bloque destacado al tope
+        if _unica_ev["status"] == "NEW":
+            print()
+            for line in _unica_ev["alert_lines"]:
+                print(line)
+
+        # Leakage: alerta urgente si en ventana
+        if _leakage["leakage_detected"]:
+            print()
+            for line in _leakage["alert_lines"]:
+                print(line)
+    except Exception as _ue:
+        logger.debug("unica_event: %s", _ue)
+
     # [0] Refresh intraday
     print("\n[0/5] Refrescando barras intraday SBN26...")
     try:
@@ -1817,6 +1837,22 @@ def run():
     print("=" * 72)
     print("  CONTEXTO MENSUAL / QUINCENAL  (informativo — no scoring diario)")
     print("=" * 72)
+
+    # Estado UNICA: watchmode / recent (si no es NEW ya se mostro arriba)
+    try:
+        from services.unica_event import check_unica_event, check_leakage_window
+        _uev = check_unica_event()
+        if _uev["status"] in ("WATCHMODE", "RECENT"):
+            for line in _uev["alert_lines"]:
+                print(line)
+        # Ventana leakage si estamos en ella y no hay alerta activa
+        _lk = check_leakage_window()
+        if _lk["in_window"] and not _lk["leakage_detected"] and _uev["status"] != "NEW":
+            for line in _lk["alert_lines"]:
+                print(line)
+    except Exception as _ue:
+        logger.debug("unica_event ctx: %s", _ue)
+
     try:
         brazil = compute_brazil_signal(session)
         print_brazil_signal(brazil)
