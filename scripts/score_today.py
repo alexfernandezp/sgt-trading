@@ -33,8 +33,6 @@ from services.ic_weighting import compute_weighted_macro_score, format_ic_summar
 
 LABELS = {
     "a1_spec_vs_mean":  "A1  Especuladores net vs media historica",
-    "a2_spec_change":   "A2  Cambio semanal specs (inv: baja=LONG, sube=SHORT)",
-    "a3_comm_vs_mean":  "A3  Comerciales net vs media 13 semanas",
     "b1_spread":        "B1  Spread SBN/SBV contango vs backwardation",
     "b2_price_vs_ma20": "B2  Z-score precio vs media 26w (|z|>1.5)",
     "b3_vwap":          "B3  Precio actual vs VWAP sesion",
@@ -47,8 +45,7 @@ LABELS = {
 }
 
 # Layer 1: weekly bias — COT + structural market state
-LAYER1_KEYS = ["a1_spec_vs_mean", "a2_spec_change", "a3_comm_vs_mean",
-               "b1_spread", "b2_price_vs_ma20"]
+LAYER1_KEYS = ["a1_spec_vs_mean", "b1_spread", "b2_price_vs_ma20"]
 
 # Layer 2 auto signals
 LAYER2_SCORE_KEYS = ["b3_vwap", "c2_open_volume"]
@@ -72,12 +69,10 @@ LAYER2_LABELS = {
 }
 
 # Criteria that invert for SHORT
-DIRECTIONAL = {"a1_spec_vs_mean", "a2_spec_change", "a3_comm_vs_mean",
-               "b1_spread", "b2_price_vs_ma20", "b3_vwap"}
+DIRECTIONAL = {"a1_spec_vs_mean", "b1_spread", "b2_price_vs_ma20", "b3_vwap"}
 
 # All auto keys (for DB save compatibility)
-AUTO_KEYS = ["a1_spec_vs_mean", "a2_spec_change", "a3_comm_vs_mean",
-             "b1_spread", "b2_price_vs_ma20", "b3_vwap",
+AUTO_KEYS = ["a1_spec_vs_mean", "b1_spread", "b2_price_vs_ma20", "b3_vwap",
              "c2_open_volume", "d3_drawdown"]
 
 
@@ -298,18 +293,6 @@ def _detail_for_key(key, inputs):
             int(inputs.get("spec_trend_4wk", 0)),
             int(inputs.get("spec_change_2wk", 0)),
             inputs.get("cot_regime", ""))
-    if key == "a2_spec_change" and "spec_change_wk" in inputs:
-        chg = int(inputs["spec_change_wk"])
-        signal = "LONG (spec reduce)" if chg < 0 else "SHORT (spec aumenta)"
-        return "  1s={:+,}  4s={:+,}  -> {}".format(
-            chg, int(inputs.get("spec_change_4wk", 0)), signal)
-    if key == "a3_comm_vs_mean" and "comm_net" in inputs:
-        comm = int(inputs["comm_net"])
-        ref  = inputs.get("comm_mean_13w") or inputs.get("comm_mean_hist")
-        if ref is not None:
-            signal = "LONG (menos hedgeado)" if comm > ref else "SHORT (más hedgeado)"
-            return "  comm={:+,}  13w_mean={:+,}  -> {}".format(comm, int(ref), signal)
-        return "  comm={:+,}".format(comm)
     if key == "b1_spread" and inputs.get("sbn26"):
         return "  SBN=%.4f SBV=%.4f spread=%+.3f" % (inputs["sbn26"], inputs["sbv26"], inputs["spread_sbn_sbv"])
     if key == "b2_price_vs_ma20" and "b2_z26" in inputs:
@@ -342,7 +325,7 @@ def _detail_for_key(key, inputs):
 
 
 def print_layer1(sl, sr, inputs):
-    """CAPA 1 - Sesgo semanal: A1/A2/A3/B1/B2."""
+    """CAPA 1 - Sesgo semanal: A1/B1/B2."""
     print()
     print("=" * 72)
     print("  CAPA 1 - SESGO SEMANAL (COT + estructura)              LONG   SHORT")

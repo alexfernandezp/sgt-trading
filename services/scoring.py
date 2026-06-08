@@ -153,46 +153,6 @@ def _score_a1(session, direction):
     return score, ctx
 
 
-def _score_a2(session, direction):
-    """
-    COT Momentum semanal INVERTIDO (contrarian).
-    Cuando specs REDUCEN posicion esta semana → señal LONG (se equivocan en el bottom).
-    Cuando specs AUMENTAN posicion esta semana → señal SHORT (se equivocan en el top).
-    Backtest 2017-2026: invertido da 53-57% WR vs 42-45% del original.
-    """
-    rows = session.execute(text(
-        "SELECT speculator_net FROM cot_data ORDER BY report_date DESC LIMIT 5"
-    )).fetchall()
-    if len(rows) < 2:
-        return None, {}
-    change_1wk = float(rows[0][0]) - float(rows[1][0])
-    change_4wk = float(rows[0][0]) - float(rows[min(4, len(rows)-1)][0])
-    # Invertido: reduccion spec → LONG, aumento spec → SHORT
-    score = _score(change_1wk < 0) if direction == "LONG" else _score(change_1wk > 0)
-    return score, {"spec_change_wk": round(change_1wk), "spec_change_4wk": round(change_4wk)}
-
-
-def _score_a3(session, direction):
-    """
-    Comerciales vs media 13 semanas (no all-time).
-    comm > 13w mean → menos hedgeados que reciente → LONG (52% WR)
-    comm < 13w mean → más hedgeados que reciente   → SHORT (57% WR)
-    All-time mean da 46% — la ventana de 13s captura el contexto accionable.
-    """
-    rows = session.execute(text(
-        "SELECT comm_net FROM cot_data ORDER BY report_date DESC LIMIT 13"
-    )).fetchall()
-    if len(rows) < 4:
-        return None, {}
-    vals = [float(r[0]) for r in rows if r[0] is not None]
-    if not vals:
-        return None, {}
-    latest   = vals[0]
-    mean_13w = sum(vals) / len(vals)
-    score    = _score(latest > mean_13w) if direction == "LONG" else _score(latest < mean_13w)
-    return score, {"comm_net": latest, "comm_mean_13w": round(mean_13w)}
-
-
 def _score_b1(session, direction):
     """
     Term Structure completa ICE No.11 — calendario de vencimientos vs full carry.
@@ -409,8 +369,6 @@ def compute_auto_scores(session: Session, direction: str, instrument: str = "SBN
             scores[key] = None
 
     run("a1_spec_vs_mean",  _score_a1, session, direction)
-    run("a2_spec_change",   _score_a2, session, direction)
-    run("a3_comm_vs_mean",  _score_a3, session, direction)
     run("b1_spread",        _score_b1, session, direction)
     run("b2_price_vs_ma20", _score_b2, session, direction)
     run("b3_vwap",          _score_b3, session, direction, instrument)
