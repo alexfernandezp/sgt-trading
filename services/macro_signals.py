@@ -236,6 +236,101 @@ def compute_brent_signal() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Brent correlation regime (uses price_history DB — daily returns)
+# ---------------------------------------------------------------------------
+
+BRENT_CORR_HIGH  = 0.35   # corr60d > this = HIGH regime (hist ~pct 85%)
+BRENT_ALERT_PCT  = 1.5    # |change_today| > this in HIGH regime = intraday alert
+
+def compute_brent_regime(session, brent_change_1d_pct: float = None) -> dict:
+    """
+    Calcula el régimen de correlación Brent-Azúcar (rolling 60d, daily returns)
+    desde price_history y emite alerta intraday si el régimen es alto y Brent
+    mueve más de ±1.5% en la sesión.
+
+    Returns:
+      corr_60d        : Pearson corr últimas 60 sesiones (daily ret)
+      corr_percentile : percentil histórico de ese valor (0-100)
+      regime          : "HIGH" | "NORMAL" | "LOW" | "UNKNOWN"
+      alert           : True si HIGH y |brent_change_today| > 1.5%
+      alert_direction : "BEARISH_PRESSURE" | "BULLISH_PRESSURE" | None
+      description     : str resumen
+    """
+    from sqlalchemy import text
+    import pandas as pd
+
+    _empty = {"corr_60d": None, "corr_percentile": None, "regime": "UNKNOWN",
+              "alert": False, "alert_direction": None,
+              "description": "Brent regime: sin datos DB"}
+
+    if session is None:
+        return _empty
+
+    try:
+        # Carga últimos ~2 años de cierres para tener contexto histórico del percentil
+        rows_b = session.execute(text(
+            "SELECT date, close FROM price_history "
+            "WHERE instrument='BRENT' AND close IS NOT NULL "
+            "ORDER BY date DESC LIMIT 520"
+        )).fetchall()
+        rows_s = session.execute(text(
+            "SELECT date, close FROM price_history "
+            "WHERE instrument='SB_CONT' AND close IS NOT NULL "
+            "ORDER BY date DESC LIMIT 520"
+        )).fetchall()
+
+        if len(rows_b) < 62 or len(rows_s) < 62:
+            return {**_empty, "description": "Brent regime: datos insuficientes en DB"}
+
+        sb = pd.Series({pd.Timestamp(r[0]): float(r[1]) for r in rows_s}).sort_index()
+        bz = pd.Series({pd.Timestamp(r[0]): float(r[1]) for r in rows_b}).sort_index()
+
+        df = pd.DataFrame({"bz": bz, "sb": sb}).dropna()
+        df["rb"] = df["bz"].pct_change()
+        df["rs"] = df["sb"].pct_change()
+        df = df.dropna()
+
+        if len(df) < 62:
+            return {**_empty, "description": "Brent regime: dias comunes insuficientes"}
+
+        roll = df["rb"].rolling(60).corr(df["rs"]).dropna()
+        corr_now = float(roll.iloc[-1])
+        pct_rank = float((roll < corr_now).mean() * 100)
+
+        if corr_now > BRENT_CORR_HIGH:
+            regime = "HIGH"
+        elif corr_now > 0.10:
+            regime = "NORMAL"
+        else:
+            regime = "LOW"
+
+        alert = False
+        alert_dir = None
+        if regime == "HIGH" and brent_change_1d_pct is not None:
+            if abs(brent_change_1d_pct) >= BRENT_ALERT_PCT:
+                alert = True
+                alert_dir = "BEARISH_PRESSURE" if brent_change_1d_pct < 0 else "BULLISH_PRESSURE"
+
+        chg_s  = (f"  hoy={brent_change_1d_pct:+.1f}%" if brent_change_1d_pct is not None else "")
+        alrt_s = (f"  -> {alert_dir}" if alert else "")
+        desc = (f"Brent-SB corr60d={corr_now:.3f} (pct={pct_rank:.0f}%)"
+                f"  regime={regime}{chg_s}{alrt_s}")
+
+        return {
+            "corr_60d":        round(corr_now, 3),
+            "corr_percentile": round(pct_rank, 1),
+            "regime":          regime,
+            "alert":           alert,
+            "alert_direction": alert_dir,
+            "description":     desc,
+        }
+
+    except Exception as exc:
+        logger.warning("compute_brent_regime: %s", exc)
+        return _empty
+
+
+# ---------------------------------------------------------------------------
 # Intraday correlation signal
 # ---------------------------------------------------------------------------
 
@@ -441,6 +536,16 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     brent = compute_brent_signal()
     corr  = compute_intraday_correlation(direction)
 
+    # Régimen de correlación Brent-Azúcar (daily, 60d rolling desde DB)
+    brent_regime = {"regime": "UNKNOWN", "corr_60d": None, "corr_percentile": None,
+                    "alert": False, "alert_direction": None,
+                    "description": "Brent regime: session no disponible"}
+    if session is not None:
+        try:
+            brent_regime = compute_brent_regime(session, brent.get("change_1d_pct"))
+        except Exception as exc:
+            logger.warning("macro_signals: brent_regime: %s", exc)
+
     # Paridad etanol (requiere session de DB con datos CEPEA)
     parity = {"signal": 0, "bias": "NEUTRAL",
                "description": "Paridad etanol: session no disponible"}
@@ -597,6 +702,7 @@ def compute_macro_signals(direction: str = "LONG", session=None) -> dict:
     return {
         "brl":          brl,
         "brent":        brent,
+        "brent_regime": brent_regime,
         "corr":         corr,
         "parity":       parity,
         "enso":         enso,

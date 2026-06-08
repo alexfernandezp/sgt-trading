@@ -816,15 +816,31 @@ def print_macro_signals(macro, direction):
     else:
         print("  USDBRL  : sin datos")
 
-    # Brent
-    bp = brent.get("brent_price")
-    bb = brent.get("bias", "NEUTRAL")
+    # Brent precio + régimen de correlación
+    bp  = brent.get("brent_price")
+    bb  = brent.get("bias", "NEUTRAL")
     b1d = brent.get("change_1d_pct")
     b5d = brent.get("change_5d_pct")
     if bp:
         print("  Brent   : $%.2f/bbl  1d=%+.2f%%  5d=%+.2f%%  [%s]" % (bp, b1d or 0, b5d or 0, bb))
     else:
         print("  Brent   : sin datos")
+
+    brent_regime = macro.get("brent_regime", {})
+    br_corr = brent_regime.get("corr_60d")
+    br_pct  = brent_regime.get("corr_percentile")
+    br_reg  = brent_regime.get("regime", "UNKNOWN")
+    br_alert = brent_regime.get("alert", False)
+    br_adir  = brent_regime.get("alert_direction")
+    if br_corr is not None:
+        reg_tag = {"HIGH": "[!! ALTA CORR !!]", "NORMAL": "[corr normal]", "LOW": "[corr baja]"}.get(br_reg, "[?]")
+        if br_alert and br_adir:
+            adir_str = "PRESION BAJISTA azucar" if "BEARISH" in br_adir else "PRESION ALCISTA azucar"
+            print("  *** BRENT ALERTA: corr60d=%.3f (pct=%.0f%%) %s | hoy=%+.1f%% -> %s ***" % (
+                br_corr, br_pct, reg_tag, b1d or 0, adir_str))
+        else:
+            chg_s = ("  hoy=%+.1f%%" % b1d) if b1d is not None else ""
+            print("  Corr-SB : corr60d=%.3f (pct=%.0f%%) %s%s" % (br_corr, br_pct, reg_tag, chg_s))
 
     # Correlación intraday
     cb  = corr.get("corr_brent_sugar")
