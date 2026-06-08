@@ -566,8 +566,8 @@ def main():
         ws    = load_ws_prices(session)
         br_df = load_brazil_pit(session)
         usda  = load_usda_stu(session)
-        brl   = load_macro_price(session, "BRL=X")
-        brent = load_macro_price(session, "BZ=F")
+        brl   = load_macro_price(session, "BRLUSD")
+        brent = load_macro_price(session, "BRENT")
     finally:
         session.close()
     print("OK")
@@ -578,8 +578,8 @@ def main():
     print(f"  WS_CONT   : {len(ws)} dias" + (" [sin datos]" if ws.empty else ""))
     print(f"  Brazil PIT: {len(br_df)} reportes" + (" [sin datos]" if br_df.empty else ""))
     print(f"  USDA STU  : {len(usda)} años" + (" [sin datos]" if usda.empty else ""))
-    print(f"  BRL=X     : {len(brl)} dias" + (" [sin datos]" if brl.empty else ""))
-    print(f"  BZ=F      : {len(brent)} dias" + (" [sin datos]" if brent.empty else ""))
+    print(f"  BRLUSD    : {len(brl)} dias" + (" [sin datos]" if brl.empty else ""))
+    print(f"  BRENT     : {len(brent)} dias" + (" [sin datos]" if brent.empty else ""))
     print()
 
     print("Construyendo frame diario y señales...", end=" ", flush=True)
