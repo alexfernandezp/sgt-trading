@@ -595,28 +595,6 @@ def print_vwap_bands(vwap_data):
     print("  BIAS VWAP GLOBAL: %s" % bias)
 
 
-# ── Input helpers ─────────────────────────────────────────────────────────────
-
-def ask(label, is_veto=False):
-    veto = " ** VETO si 0 **" if is_veto else ""
-    while True:
-        val = input("  %s%s  [1/0]: " % (label, veto)).strip()
-        if val in ("1", "0"):
-            return int(val)
-        print("  Introduce 1 o 0.")
-
-
-def ask_direction(suggestion):
-    print()
-    opts = ["LONG", "SHORT", "NEUTRAL"]
-    while True:
-        raw = input("  Confirmar direccion [LONG/SHORT/NEUTRAL] (Enter = %s): " % suggestion).strip().upper()
-        if raw == "":
-            return suggestion
-        if raw in opts:
-            return raw
-        print("  Introduce LONG, SHORT o NEUTRAL.")
-
 
 # ── Volume profile display ────────────────────────────────────────────────────
 
@@ -1737,19 +1715,8 @@ def run():
             print("  [!]   VWAP WARN: sigma=%.2f — reducir size si confirmas" % (_gs or 0))
     print("=" * 72)
 
-    confirmed_direction = ask_direction(direction)
-
-    # Recalcular macro con la dirección confirmada si difiere de la sugerida
-    if confirmed_direction not in ("NEUTRAL", None) and confirmed_direction != l1_dir_hint:
-        try:
-            macro = compute_macro_signals(confirmed_direction, session=session)
-        except Exception:
-            pass
-
-    if confirmed_direction == "NEUTRAL":
-        print("\n  NEUTRAL seleccionado. Sin trade hoy.")
-        session.close()
-        return
+    confirmed_direction = direction
+    print("  Direccion auto: %s" % confirmed_direction)
 
     # ── VWAP sigma gate ───────────────────────────────────────────────────────
     gate_blocked, gate_sigma, gate_level, gate_msg = _vwap_gate(vwap_data, confirmed_direction)
@@ -1767,28 +1734,23 @@ def run():
         session.close()
         return
 
-    # Manual criteria for confirmed direction
-    print("\n[5/5] Criterios manuales para %s:\n" % confirmed_direction)
+    # Criterios manuales — se omiten en modo automático (sin input)
     manual = {}
 
-    manual["c1_key_level"] = ask(LABELS["c1_key_level"])
-
-    # C1 also feeds Layer 2 — update l2 signal for sizing
+    # C1 key level: no feed automático disponible → None
     l2_confirmed = l2l if confirmed_direction == "LONG" else l2r
-    l2_confirmed["c1_key_level"] = manual["c1_key_level"]
+    l2_confirmed["c1_key_level"] = None
 
+    # C3 opciones: usar señal auto si disponible
     c3_auto = opt_c3_long if confirmed_direction == "LONG" else opt_c3_short
     if c3_auto is not None:
         scores_dir = scores_l if confirmed_direction == "LONG" else scores_r
         scores_dir["c3_options"] = c3_auto
         inputs.update(opt_inputs)
         print("  C3  [auto] %s" % _tag(c3_auto))
-    else:
-        manual["c3_options"] = ask(LABELS["c3_options"])
 
-    manual["d1_event_risk"] = ask(LABELS["d1_event_risk"], is_veto=True)
-    manual["d2_liquidity"]  = ask(LABELS["d2_liquidity"],  is_veto=True)
-    notes = input("\n  Notas (Enter para omitir): ").strip() or None
+    # D1/D2 vetos y notas: desactivados en modo automático
+    notes = None
 
     scores_dir = scores_l if confirmed_direction == "LONG" else scores_r
     scoring = save_scoring(session, confirmed_direction, scores_dir, inputs,
