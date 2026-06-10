@@ -165,19 +165,25 @@ def _to_float(v) -> Optional[float]:
 def _to_pct(v) -> Optional[float]:
     """
     Convierte valor de mix% a float en rango 0-100.
-    Acepta: '35,77%' → 35.77 | 0.357 → 35.7 | 35.77 → 35.77
+    Acepta: '35,77%' → 35.77 | '1.234,56%' → 1234.56 | 0.357 → 35.7 | 35.77 → 35.77
     """
     if v is None:
         return None
     s = str(v).strip()
     if s.endswith("%"):
         try:
-            return float(s[:-1].replace(",", ".").replace(".", "", s[:-1].count(".") - 1))
+            num = s[:-1].strip()
+            if "," in num and "." in num:
+                # PT formato con miles: "1.234,56" → "1234.56"
+                num = num.replace(".", "").replace(",", ".")
+            elif "," in num:
+                # PT decimal solo: "35,77" → "35.77"
+                num = num.replace(",", ".")
+            return round(float(num), 4)
         except Exception:
             pass
     try:
         f = float(s.replace(",", "."))
-        # Si el valor está entre 0 y 1 exclusivo, es fracción → convertir a %
         if 0 < f <= 1.0:
             return round(f * 100, 4)
         return round(f, 4)
@@ -441,73 +447,89 @@ def _build_records(tb02, tb04, tb06, tb09, tb10) -> list[dict]:
 def upsert_records(session, records: list[dict]) -> int:
     """Upsert registros en unica_biweekly. Retorna número de filas insertadas/actualizadas."""
     from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
     inserted = 0
+    skipped_bad = 0
     for rec in records:
         if rec.get("quinzena_date") is None or rec.get("safra") is None:
             continue
-        existing = session.execute(
-            text("SELECT id FROM unica_biweekly WHERE safra=:s AND quinzena_date=:d AND region=:r"),
-            {"s": rec["safra"], "d": rec["quinzena_date"], "r": rec["region"]},
-        ).fetchone()
-        if existing:
-            session.execute(
-                text("""
-                    UPDATE unica_biweekly SET
-                        cane_crushed_t=:cane, sugar_t=:sugar,
-                        ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h, ethanol_total_m3=:eth_t,
-                        atr_kg_ton=:atr, sugar_mix_pct=:smix, eth_mix_pct=:emix,
-                        liters_eth_ton=:let, liters_anidro_ton=:lan, liters_hidratado_ton=:lhid,
-                        eth_sales_total_m3=:st, eth_sales_internal_m3=:si, eth_sales_external_m3=:se,
-                        source=:src
-                    WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
-                """),
-                {
-                    "cane": rec.get("cane_crushed_t"), "sugar": rec.get("sugar_t"),
-                    "eth_a": rec.get("ethanol_anidro_m3"), "eth_h": rec.get("ethanol_hidratado_m3"),
-                    "eth_t": rec.get("ethanol_total_m3"),
-                    "atr": rec.get("atr_kg_ton"), "smix": rec.get("sugar_mix_pct"),
-                    "emix": rec.get("eth_mix_pct"), "let": rec.get("liters_eth_ton"),
-                    "lan": rec.get("liters_anidro_ton"), "lhid": rec.get("liters_hidratado_ton"),
-                    "st": rec.get("eth_sales_total_m3"), "si": rec.get("eth_sales_internal_m3"),
-                    "se": rec.get("eth_sales_external_m3"), "src": rec.get("source"),
-                    "safra": rec["safra"], "qdate": rec["quinzena_date"], "reg": rec["region"],
-                },
+        try:
+            existing = session.execute(
+                text("SELECT id FROM unica_biweekly WHERE safra=:s AND quinzena_date=:d AND region=:r"),
+                {"s": rec["safra"], "d": rec["quinzena_date"], "r": rec["region"]},
+            ).fetchone()
+            if existing:
+                session.execute(
+                    text("""
+                        UPDATE unica_biweekly SET
+                            cane_crushed_t=:cane, sugar_t=:sugar,
+                            ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h, ethanol_total_m3=:eth_t,
+                            atr_kg_ton=:atr, sugar_mix_pct=:smix, eth_mix_pct=:emix,
+                            liters_eth_ton=:let, liters_anidro_ton=:lan, liters_hidratado_ton=:lhid,
+                            eth_sales_total_m3=:st, eth_sales_internal_m3=:si, eth_sales_external_m3=:se,
+                            source=:src
+                        WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
+                    """),
+                    {
+                        "cane": rec.get("cane_crushed_t"), "sugar": rec.get("sugar_t"),
+                        "eth_a": rec.get("ethanol_anidro_m3"), "eth_h": rec.get("ethanol_hidratado_m3"),
+                        "eth_t": rec.get("ethanol_total_m3"),
+                        "atr": rec.get("atr_kg_ton"), "smix": rec.get("sugar_mix_pct"),
+                        "emix": rec.get("eth_mix_pct"), "let": rec.get("liters_eth_ton"),
+                        "lan": rec.get("liters_anidro_ton"), "lhid": rec.get("liters_hidratado_ton"),
+                        "st": rec.get("eth_sales_total_m3"), "si": rec.get("eth_sales_internal_m3"),
+                        "se": rec.get("eth_sales_external_m3"), "src": rec.get("source"),
+                        "safra": rec["safra"], "qdate": rec["quinzena_date"], "reg": rec["region"],
+                    },
+                )
+            else:
+                session.execute(
+                    text("""
+                        INSERT INTO unica_biweekly (
+                            safra, quinzena_date, region,
+                            cane_crushed_t, sugar_t,
+                            ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
+                            atr_kg_ton, sugar_mix_pct, eth_mix_pct,
+                            liters_eth_ton, liters_anidro_ton, liters_hidratado_ton,
+                            eth_sales_total_m3, eth_sales_internal_m3, eth_sales_external_m3,
+                            source
+                        ) VALUES (
+                            :safra, :qdate, :reg,
+                            :cane, :sugar,
+                            :eth_a, :eth_h, :eth_t,
+                            :atr, :smix, :emix,
+                            :let, :lan, :lhid,
+                            :st, :si, :se,
+                            :src
+                        )
+                    """),
+                    {
+                        "safra": rec["safra"], "qdate": rec["quinzena_date"], "reg": rec["region"],
+                        "cane": rec.get("cane_crushed_t"), "sugar": rec.get("sugar_t"),
+                        "eth_a": rec.get("ethanol_anidro_m3"), "eth_h": rec.get("ethanol_hidratado_m3"),
+                        "eth_t": rec.get("ethanol_total_m3"),
+                        "atr": rec.get("atr_kg_ton"), "smix": rec.get("sugar_mix_pct"),
+                        "emix": rec.get("eth_mix_pct"), "let": rec.get("liters_eth_ton"),
+                        "lan": rec.get("liters_anidro_ton"), "lhid": rec.get("liters_hidratado_ton"),
+                        "st": rec.get("eth_sales_total_m3"), "si": rec.get("eth_sales_internal_m3"),
+                        "se": rec.get("eth_sales_external_m3"), "src": rec.get("source"),
+                    },
+                )
+                inserted += 1
+        except Exception as e:
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            skipped_bad += 1
+            logger.warning(
+                "unica_import: fila saltada %s/%s/%s — %s: %s",
+                rec.get("safra"), rec.get("quinzena_date"), rec.get("region"),
+                type(e).__name__, str(e)[:120],
             )
-        else:
-            session.execute(
-                text("""
-                    INSERT INTO unica_biweekly (
-                        safra, quinzena_date, region,
-                        cane_crushed_t, sugar_t,
-                        ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
-                        atr_kg_ton, sugar_mix_pct, eth_mix_pct,
-                        liters_eth_ton, liters_anidro_ton, liters_hidratado_ton,
-                        eth_sales_total_m3, eth_sales_internal_m3, eth_sales_external_m3,
-                        source
-                    ) VALUES (
-                        :safra, :qdate, :reg,
-                        :cane, :sugar,
-                        :eth_a, :eth_h, :eth_t,
-                        :atr, :smix, :emix,
-                        :let, :lan, :lhid,
-                        :st, :si, :se,
-                        :src
-                    )
-                """),
-                {
-                    "safra": rec["safra"], "qdate": rec["quinzena_date"], "reg": rec["region"],
-                    "cane": rec.get("cane_crushed_t"), "sugar": rec.get("sugar_t"),
-                    "eth_a": rec.get("ethanol_anidro_m3"), "eth_h": rec.get("ethanol_hidratado_m3"),
-                    "eth_t": rec.get("ethanol_total_m3"),
-                    "atr": rec.get("atr_kg_ton"), "smix": rec.get("sugar_mix_pct"),
-                    "emix": rec.get("eth_mix_pct"), "let": rec.get("liters_eth_ton"),
-                    "lan": rec.get("liters_anidro_ton"), "lhid": rec.get("liters_hidratado_ton"),
-                    "st": rec.get("eth_sales_total_m3"), "si": rec.get("eth_sales_internal_m3"),
-                    "se": rec.get("eth_sales_external_m3"), "src": rec.get("source"),
-                },
-            )
-            inserted += 1
     session.commit()
+    if skipped_bad:
+        logger.warning("unica_import: %d filas saltadas por datos inválidos", skipped_bad)
     return inserted
 
 
