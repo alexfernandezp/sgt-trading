@@ -79,15 +79,32 @@ def _get_mapa_latest(session) -> Optional[dict]:
         from sqlalchemy import text
         row = session.execute(
             text("""
-                SELECT ref_date, cane_area_kha, cane_yield_t_ha, total_cane_mt,
-                       sugar_mt, ethanol_total_bl, revision_num, source_label
+                SELECT report_date, harvest_year, fortnight_seq,
+                       cane_crushed_t_cumulative, sugar_t_cumulative,
+                       ethanol_total_m3_cumulative, sugar_mix_pct,
+                       report_issue_date, report_revision_seq
                 FROM brazil_production
-                ORDER BY ref_date DESC, revision_num DESC
+                ORDER BY report_date DESC, report_issue_date DESC
                 LIMIT 1
             """),
         ).fetchone()
         if row:
-            return dict(row._mapping)
+            m = row._mapping
+
+            def _to_mt(v):
+                return round(float(v) / 1e6, 2) if v is not None else None
+
+            return {
+                "ref_date":          m["report_date"],
+                "harvest_year":      m["harvest_year"],
+                "fortnight_seq":     m["fortnight_seq"],
+                "total_cane_mt":     _to_mt(m["cane_crushed_t_cumulative"]),
+                "sugar_mt":          _to_mt(m["sugar_t_cumulative"]),
+                "ethanol_total_mm3": _to_mt(m["ethanol_total_m3_cumulative"]),
+                "sugar_mix_pct":     float(m["sugar_mix_pct"]) if m["sugar_mix_pct"] is not None else None,
+                "revision_num":      m["report_revision_seq"],
+                "issue_date":        m["report_issue_date"],
+            }
     except Exception as e:
         logger.warning("brazil_crop_progress: MAPA query fallida: %s", e)
     return None
@@ -251,24 +268,33 @@ def format_crop_progress_report(signals: dict) -> str:
     if signals.get("error"):
         return f"Brazil Crop Progress: sin datos ({signals['error']})"
 
+    def _z(key, width=6):
+        """Formatea un z-score que puede ser None sin reventar."""
+        v = signals.get(key)
+        return f"{v:>{width}.2f}" if isinstance(v, (int, float)) else f"{'N/D':>{width}}"
+
+    def _v(key, default="N/D"):
+        v = signals.get(key)
+        return default if v is None else v
+
     lines = [
         f"=== Brazil Crop Progress ===",
-        f"Safra: {signals.get('latest_safra', '?')}  "
-        f"Quincena: {signals.get('latest_quinzena_date', '?')}  "
-        f"({signals.get('data_age_days', '?')}d old)",
-        f"Season progress: {signals.get('season_progress_pct', '?')}%  "
+        f"Safra: {_v('latest_safra', '?')}  "
+        f"Quincena: {_v('latest_quinzena_date', '?')}  "
+        f"({_v('data_age_days', '?')}d old)",
+        f"Season progress: {_v('season_progress_pct', '?')}%  "
         f"(baseline {signals.get('baseline_years', 0)} años)",
         "",
-        f"Crushing pace z: {signals.get('crushing_pace_z', 'N/D'):>6}  "
-        f"pct_rank: {signals.get('crushing_pace_pct_rank', 'N/D')}",
-        f"Sugar mix    z: {signals.get('sugar_mix_pct_z', 'N/D'):>6}  "
-        f"pct_rank: {signals.get('sugar_mix_pct_rank', 'N/D')}",
-        f"ATR delta (kg/t): {signals.get('atr_delta', 'N/D')}  "
-        f"(curr={signals.get('atr_current', 'N/D')}  hist={signals.get('atr_hist_mean', 'N/D')})",
-        f"Eth.hid  pace z: {signals.get('eth_hid_pace_z', 'N/D'):>6}  "
-        f"pct_rank: {signals.get('eth_hid_pace_pct_rank', 'N/D')}",
-        f"YoY caña: {signals.get('yoy_cane_pct', 'N/D')}%",
-        f"Projected sugar (CS full-year): {signals.get('projected_sugar_mt', 'N/D')} Mt",
+        f"Crushing pace z: {_z('crushing_pace_z')}  "
+        f"pct_rank: {_v('crushing_pace_pct_rank')}",
+        f"Sugar mix    z: {_z('sugar_mix_pct_z')}  "
+        f"pct_rank: {_v('sugar_mix_pct_rank')}",
+        f"ATR delta (kg/t): {_v('atr_delta')}  "
+        f"(curr={_v('atr_current')}  hist={_v('atr_hist_mean')})",
+        f"Eth.hid  pace z: {_z('eth_hid_pace_z')}  "
+        f"pct_rank: {_v('eth_hid_pace_pct_rank')}",
+        f"YoY caña: {_v('yoy_cane_pct')}%",
+        f"Projected sugar (CS full-year): {_v('projected_sugar_mt')} Mt",
     ]
 
     mapa = signals.get("mapa_latest")
@@ -278,7 +304,7 @@ def format_crop_progress_report(signals: dict) -> str:
             f"MAPA último levantamiento ({mapa.get('ref_date', '?')} rev{mapa.get('revision_num', 0)}):",
             f"  Caña: {mapa.get('total_cane_mt', 'N/D')} Mt  "
             f"Azúcar: {mapa.get('sugar_mt', 'N/D')} Mt  "
-            f"Etanol: {mapa.get('ethanol_total_bl', 'N/D')} Bl",
+            f"Etanol: {mapa.get('ethanol_total_mm3', 'N/D')} Mm³",
         ]
 
     return "\n".join(str(l) for l in lines)
