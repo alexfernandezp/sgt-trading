@@ -36,3 +36,9 @@ ENV/
 *.log
 *.tmp
 *.bak
+logs/
+
+# Scratch / debug artefactos (no versionar)
+scripts/_*.py
+*_debug.html
+.git_commit_msg.txt
