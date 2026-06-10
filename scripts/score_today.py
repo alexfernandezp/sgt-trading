@@ -285,14 +285,15 @@ def _build_layer2(session, scores, mtf, vp_dict, price, direction, vwap_data=Non
 # ── Layer display ─────────────────────────────────────────────────────────────
 
 def _detail_for_key(key, inputs):
-    if key == "a1_spec_vs_mean" and "spec_net" in inputs:
-        return "  spec={:+,}  P_hist={:.0f}%  P_3m={:.0f}%  tend4s={:+,}  chg2s={:+,}  [{}]".format(
-            int(inputs["spec_net"]),
-            inputs.get("spec_alltime_pct", 0),
-            inputs.get("spec_3m_pct", 0),
-            int(inputs.get("spec_trend_4wk", 0)),
-            int(inputs.get("spec_change_2wk", 0)),
-            inputs.get("cot_regime", ""))
+    if key == "a1_spec_vs_mean" and "mm_net" in inputs:
+        return "  MM={:+,}  P3yr={:.0f}%  Δ1wk={:+,} z={:+.2f} {}  →  {} ({})".format(
+            inputs["mm_net"],
+            inputs.get("mm_pct_3yr", 0),
+            inputs.get("mm_change_1wk", 0),
+            inputs.get("mm_weekly_z", 0),
+            inputs.get("velocity_class", ""),
+            inputs.get("composite_state", ""),
+            inputs.get("level_regime", ""))
     if key == "b1_spread" and inputs.get("sbn26"):
         return "  SBN=%.4f SBV=%.4f spread=%+.3f" % (inputs["sbn26"], inputs["sbv26"], inputs["spread_sbn_sbv"])
     if key == "b2_price_vs_ma20" and "b2_z26" in inputs:
@@ -1420,67 +1421,61 @@ def print_trade_card(setup, bt, ez=None, vp=None, ms=None):
             print("  %.4f c/lb  %-16s  (+%.4fc mas alla del stop)" % (
                 lv["price"], lv["name"][:16], lv["dist_from_stop"]))
 
-    if setup.get("cot_percentile") is not None:
-        pct      = setup["cot_percentile"]
+    if setup.get("cot_net") is not None:
         net      = setup["cot_net"]
-        label    = setup["cot_label"]
-        regime   = setup.get("cot_regime", "")
-        r52      = setup.get("cot_recent_pct")
+        pct      = setup.get("cot_percentile") or 0
+        hist_min = setup.get("cot_hist_min", 0)
+        hist_max = setup.get("cot_hist_max", 0)
+        lv_reg   = setup.get("cot_level_regime", "")
+        vel_cls  = setup.get("cot_velocity_class", "")
+        wkz      = setup.get("cot_weekly_z")
+        chg1wk   = setup.get("cot_change_1wk")
+        chg4wk   = setup.get("cot_change_4wk")
         t4wk     = setup.get("cot_trend_4wk")
-        t4wk_wk  = setup.get("cot_change_4wk")
-        hist_min = setup.get("cot_hist_min")
-        hist_max = setup.get("cot_hist_max")
-        pct_min  = setup.get("cot_pct_from_min")
+        r52      = setup.get("cot_recent_pct")
+        cs       = setup.get("cot_composite", "NEUTRO")
+        conv     = setup.get("cot_conviction", 0)
+        ctx_str  = setup.get("cot_context_str", "")
 
-        pct3m    = setup.get("cot_3m_pct")
-        chg2wk   = setup.get("cot_change_2wk")
+        stars_map = {3: "★★★  MAX CONVICCION", 2: "★★   ALTA", 1: "★    MODERADA", 0: "     NEUTRO"}
 
-        print("\n  -- CONTEXTO COT (regimen de posicionamiento) --")
-        print("  Spec net actual  : {:+,}".format(net))
-        print("  Percentil hist.  : P{:.0f}  (min: {:+,}  max: {:+,}  pos: {:.0f}% rango)".format(
-            pct, hist_min or 0, hist_max or 0, pct_min or 0))
-        if pct3m is not None:
-            print("  Percentil 3 meses: P{:.0f}  (contexto reciente accionable)".format(pct3m))
-        if r52 is not None:
-            print("  Percentil 52 sem : P{:.0f}  (referencia anual)".format(r52))
-        if chg2wk is not None:
-            dir2 = "subiendo" if chg2wk > 0 else "bajando"
-            print("  Cambio 2 semanas : {:+,}  ({})".format(chg2wk, dir2))
-        if t4wk is not None:
-            dir_txt = "subiendo (cubriendo cortos/acumulando largos)" if t4wk > 0 else "bajando (anadiendo cortos/liquidando largos)"
-            print("  Tendencia 4 sem  : {:+,}  MA4s {}".format(t4wk, dir_txt))
-        if t4wk_wk is not None:
-            print("  Cambio 4 sem     : {:+,}".format(t4wk_wk))
-
-        regime_desc = {
-            "EXTREMO_CORTO_ABSOLUTO": "EXTREMO ABSOLUTO CORTO - P<=5 histor. cobertura/squeeze inminente  [LONG fuerte]",
-            "EXTREMO_LARGO_ABSOLUTO": "EXTREMO ABSOLUTO LARGO - P>=95 histor. liquidacion inminente       [SHORT fuerte]",
-            "CONTRARIAN_SHORT":       "CONTRARIAN BAJISTA - extremo historico P>=85 + revirtiendo          [SHORT fuerte]",
-            "CROWDED_SHORT":          "CROWDED SHORT - specs apilando cortos en zona baja → contrarian LONG [LONG moderado]",
-            "CROWDED_LONG":           "CROWDED LONG  - specs apilando largos en zona alta → contrarian SHORT[SHORT moderado]",
-            "NEUTRAL":                "NEUTRAL - sin posicionamiento extremo ni crowded detectable",
+        _COMPOSITE_DESC = {
+            "CAPITULACION_CORTA":  "Extremo corto + specs aún reduciendo  → LONG maxima convicción (capitulación)",
+            "SUELO_POTENCIAL":     "Zona extrema/deprimida + reducción significativa  → LONG moderado",
+            "SUELO_CONFIRMADO":    "Extremo corto + specs empezando a cubrir → LONG (suelo en progreso)",
+            "NEUTRO":              "Sin señal contrarian clara — posicionamiento no accionable",
+            "TECHO_POTENCIAL":     "Zona elevada + specs acumulando  → SHORT moderado",
+            "TECHO_CONFIRMADO":    "Extremo largo + specs empezando a huir → SHORT (techo en progreso)",
+            "CAPITULACION_LARGA":  "Extremo largo + specs aún acumulando  → SHORT maxima convicción (crowding)",
         }
-        desc = regime_desc.get(regime, regime)
-        print("  Regimen COT      : {}".format(desc))
 
-        if setup["direction"] == "LONG":
-            if regime == "EXTREMO_CORTO_ABSOLUTO":
-                print("  Calidad COT      : MAXIMA  (extremo historico P<=5, squeeze inminente)")
-            elif regime == "CROWDED_SHORT":
-                print("  Calidad COT      : ALTA    (specs crowded cortos, contrarian long)")
-            elif regime in ("CROWDED_LONG", "CONTRARIAN_SHORT", "EXTREMO_LARGO_ABSOLUTO"):
-                print("  Calidad COT WARN : BAJA    (specs en contra del LONG - crowded largos/extremo largo)")
-            else:
-                print("  Calidad COT      : MODERADA  (NEUTRAL - sin señal contrarian clara)")
-        else:
-            if regime == "EXTREMO_LARGO_ABSOLUTO":
-                print("  Calidad COT      : MAXIMA  (extremo historico P>=95, liquidacion inminente)")
-            elif regime in ("CONTRARIAN_SHORT", "CROWDED_LONG"):
-                print("  Calidad COT      : ALTA    (specs en extremo/crowded largos, contrarian short)")
-            elif regime in ("EXTREMO_CORTO_ABSOLUTO", "CROWDED_SHORT"):
-                print("  Calidad COT WARN : BAJA    (specs en contra del SHORT - extremo corto/crowded cortos)")
-            else:
-                print("  Calidad COT      : MODERADA  (NEUTRAL - sin señal contrarian clara)")
+        print("\n  -- CONTEXTO COT (nivel × velocidad) --")
+        print("  {}".format(ctx_str))
+        print("  MM net actual    : {:+,}".format(net))
+        print("  Rango 3yr        : {:+,} … {:+,}  |  P3yr={:.0f}%  |  P1yr={:.0f}%".format(
+            hist_min, hist_max, pct, r52 or 0))
+        print("  Nivel            : {}".format(lv_reg))
+        if chg1wk is not None:
+            dir1 = "cubriendo/acumulando largos" if chg1wk > 0 else "añadiendo cortos/liquidando largos"
+            print("  Δ 1 semana       : {:+,}  ({})".format(chg1wk, dir1))
+        if wkz is not None:
+            print("  z velocidad      : {:+.2f}  →  {}".format(wkz, vel_cls))
+        if t4wk is not None:
+            dir_t = "subiendo" if t4wk > 0 else "bajando"
+            print("  Tendencia MA4s   : {:+,}  ({})".format(t4wk, dir_t))
+        if chg4wk is not None:
+            print("  Δ 4 semanas      : {:+,}".format(chg4wk))
+        print("  Estado compuesto : {}  —  {}".format(cs, _COMPOSITE_DESC.get(cs, cs)))
+        print("  Convicción COT   : {}".format(stars_map.get(conv, str(conv))))
+
+        # Advertencia si el COT contradice la dirección del trade
+        direction = setup.get("direction", "")
+        long_states  = {"CAPITULACION_CORTA", "SUELO_POTENCIAL", "SUELO_CONFIRMADO"}
+        short_states = {"CAPITULACION_LARGA", "TECHO_POTENCIAL", "TECHO_CONFIRMADO"}
+        if direction == "LONG" and cs in short_states:
+            print("  !! WARN COT      : estado SHORT — posicionamiento en contra del LONG !!")
+        elif direction == "SHORT" and cs in long_states:
+            print("  !! WARN COT      : estado LONG — posicionamiento en contra del SHORT !!")
 
     if bt and bt.get("per_target"):
         pt = bt["per_target"]

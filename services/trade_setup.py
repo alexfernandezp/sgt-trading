@@ -71,18 +71,17 @@ def _swing_high(df, lookback=25, min_dist=None):
 
 
 def _cot_full(session):
-    from services.scoring import _cot_regime
-    rows = session.execute(text(
-        "SELECT speculator_net FROM cot_data ORDER BY report_date DESC"
-    )).fetchall()
-    if not rows:
-        return None, None, {}, "NEUTRAL"
-    regime, _, _, ctx = _cot_regime(rows)
-    pct   = ctx.get("spec_alltime_pct")
-    net   = ctx.get("spec_net")
-    label = "EXTREMO" if pct is not None and (pct <= 15 or pct >= 85) else \
-            "ELEVADO"  if pct is not None and (pct <= 25 or pct >= 75) else "NEUTRAL"
-    return round(pct, 1) if pct else None, net, ctx, label
+    from services.cot_signal import get_cot_signal
+    from dataclasses import asdict
+    sig = get_cot_signal(session)
+    if sig.level_regime == "INSUFFICIENT_DATA":
+        return None, None, {}, "NEUTRO"
+    pct   = sig.mm_pct_alltime
+    net   = sig.mm_net
+    ctx   = asdict(sig)
+    label = "EXTREMO" if pct <= 15 or pct >= 85 else \
+            "ELEVADO"  if pct <= 25 or pct >= 75 else "NEUTRO"
+    return round(pct, 1), net, ctx, label
 
 
 # ── Structural targets ────────────────────────────────────────────────────────
@@ -426,18 +425,21 @@ def compute_trade_setup(
         "today_ohlc":        today_ohlc,
         # Escenario adverso
         "adverse":           adverse,
-        # COT
-        "cot_percentile":    cot_pct,
-        "cot_net":           cot_net,
-        "cot_label":         cot_label,
-        "cot_regime":        cot_ctx.get("cot_regime"),
-        "cot_recent_pct":    cot_ctx.get("spec_recent_pct"),
-        "cot_3m_pct":        cot_ctx.get("spec_3m_pct"),
-        "cot_trend_4wk":     cot_ctx.get("spec_trend_4wk"),
-        "cot_change_2wk":    cot_ctx.get("spec_change_2wk"),
-        "cot_change_4wk":    cot_ctx.get("spec_change_4wk"),
-        "cot_hist_min":      cot_ctx.get("spec_hist_min"),
-        "cot_hist_max":      cot_ctx.get("spec_hist_max"),
-        "cot_pct_from_min":  cot_ctx.get("spec_pct_from_min"),
+        # COT (nivel × velocidad — modelo compuesto)
+        "cot_percentile":     cot_pct,
+        "cot_net":            cot_net,
+        "cot_label":          cot_label,
+        "cot_level_regime":   cot_ctx.get("level_regime"),
+        "cot_velocity_class": cot_ctx.get("velocity_class"),
+        "cot_weekly_z":       cot_ctx.get("mm_weekly_z"),
+        "cot_composite":      cot_ctx.get("composite_state"),
+        "cot_conviction":     cot_ctx.get("conviction"),
+        "cot_context_str":    cot_ctx.get("context_str"),
+        "cot_recent_pct":     cot_ctx.get("mm_pct_1yr"),
+        "cot_trend_4wk":      cot_ctx.get("mm_trend_4wk"),
+        "cot_change_1wk":     cot_ctx.get("mm_change_1wk"),
+        "cot_change_4wk":     cot_ctx.get("mm_change_4wk"),
+        "cot_hist_min":       cot_ctx.get("mm_3yr_min"),
+        "cot_hist_max":       cot_ctx.get("mm_3yr_max"),
         "decision":          decision,
     }

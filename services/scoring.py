@@ -130,27 +130,9 @@ def _cot_regime(rows_full):
 
 
 def _score_a1(session, direction):
-    """
-    COT Extreme Percentile Model — managed money net (disaggregated).
-    Percentil 3 años: >90th = EXTREME_LONG → SHORT; <10th = EXTREME_SHORT → LONG.
-    Upgrade sobre spec_net legacy: mm_net captura hedge funds/CTAs puros.
-    Mantiene _cot_regime como contexto adicional en el dict de salida.
-    """
-    from services.cot_percentile import score_cot_percentile
-    score, ctx = score_cot_percentile(session, direction)
-
-    # Contexto adicional: régimen legacy (spec_net) para audit trail
-    rows_legacy = session.execute(text(
-        "SELECT speculator_net FROM cot_data ORDER BY report_date DESC"
-    )).fetchall()
-    if len(rows_legacy) >= 4:
-        _, _, _, legacy_ctx = _cot_regime(rows_legacy)
-        # Añadir campos legacy sin sobreescribir los nuevos
-        for k, v in legacy_ctx.items():
-            if k not in ctx:
-                ctx[f"legacy_{k}"] = v
-
-    return score, ctx
+    """COT nivel × velocidad — ver services/cot_signal.py para la lógica completa."""
+    from services.cot_signal import score_cot
+    return score_cot(session, direction)
 
 
 def _score_b1(session, direction):
