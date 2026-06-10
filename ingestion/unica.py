@@ -42,6 +42,7 @@ _MONTHS_PT = {
 
 # Progreso tipico de safra Centro-Sul por quincena (% del total anual cosechado)
 # Fuente: histórico UNICA 2015-2024, media multi-año
+# Ene-Mar extendidos a ~99-100% para que proyección fallback funcione al cierre
 _SEASON_PROGRESS_PCT = {
     (4, 1): 2.5,   (4, 2): 6.5,
     (5, 1): 11.0,  (5, 2): 16.5,
@@ -52,7 +53,27 @@ _SEASON_PROGRESS_PCT = {
     (10, 1): 78.0, (10, 2): 83.5,
     (11, 1): 88.0, (11, 2): 92.5,
     (12, 1): 96.0, (12, 2): 98.5,
+    (1, 1): 99.0,  (1, 2): 99.5,
+    (2, 1): 99.7,  (2, 2): 99.9,
+    (3, 1): 99.9,  (3, 2): 100.0,
 }
+
+# Orden canónico de quincenas de la safra CS (24 quincenas, empieza 16/04)
+# seq 1 = 16/abr, seq 24 = 01/abr (año siguiente)
+_SEASON_FORTNIGHTS = [
+    (4, 16), (5, 1), (5, 16), (6, 1), (6, 16), (7, 1), (7, 16), (8, 1),
+    (8, 16), (9, 1), (9, 16), (10, 1), (10, 16), (11, 1), (11, 16), (12, 1),
+    (12, 16), (1, 1), (1, 16), (2, 1), (2, 16), (3, 1), (3, 16), (4, 1),
+]
+_SEQ = {md: i + 1 for i, md in enumerate(_SEASON_FORTNIGHTS)}
+
+
+def season_fortnight_seq(d) -> Optional[int]:
+    """(month, day∈{1,16}) → seq 1..24 dentro de la safra CS. None si no es quincena válida."""
+    from datetime import date as _date
+    if isinstance(d, _date):
+        return _SEQ.get((d.month, d.day))
+    return _SEQ.get(tuple(d))
 
 
 def _pt_float(s: str) -> float:
@@ -234,89 +255,226 @@ def parse_unica_pdf(pdf_bytes: bytes) -> Optional[dict]:
     return result
 
 
+def _parse_cumulative_table(full_text: str, tabela_num: int) -> dict:
+    """
+    Parsea Tabela N (3-7) del PDF UNICA — serie acumulada quincena-a-quincena CS.
+
+    Formato de fila: DD/MM  SP_prev SP_cur Var%  CS_prev CS_cur Var%  DEM_prev DEM_cur Var%
+    Retorna {seq: {"cs_cur": float, "cs_prev": float}} keyed by season_fortnight_seq.
+    Tabela 3=caña(t), 4=azúcar(t), 5/6/7=etanol total/anidro/hidratado(m³).
+    """
+    t_start = full_text.find(f"Tabela {tabela_num}.")
+    if t_start < 0:
+        logger.warning("UNICA parse: Tabela %d no encontrada", tabela_num)
+        return {}
+    t_end_candidates = [
+        full_text.find(f"Tabela {tabela_num + 1}.", t_start + 1),
+        full_text.find("Nota", t_start + 1),
+    ]
+    t_end = min((x for x in t_end_candidates if x > t_start), default=len(full_text))
+    block = full_text[t_start:t_end]
+
+    # Detectar el safra del encabezado para inferir años
+    safra_m = re.search(r"(\d{4}/\d{4})", block)
+    safra_cur_year = int(safra_m.group(1).split("/")[0]) if safra_m else None
+
+    result = {}
+    # Filas con fecha: "DD/MM" al inicio de línea
+    for line in block.splitlines():
+        line = line.strip()
+        dm = re.match(r"^(\d{1,2})/(\d{2})\s+", line)
+        if not dm:
+            continue
+        day = int(dm.group(1))
+        mon = int(dm.group(2))
+        if day not in (1, 16):
+            continue
+        seq = _SEQ.get((mon, day))
+        if seq is None:
+            continue
+
+        # Extraer los números de la línea (ignorar columna SP, tomar CS)
+        # Formato esperado: DD/MM  num num num%  num num num%  num num num%
+        nums = re.findall(r"([\d.]+(?:,\d+)?)", line[len(dm.group(0)):])
+        # Columnas 0,1,2 = SP_prev, SP_cur, var%; 3,4,5 = CS_prev, CS_cur, var%
+        if len(nums) >= 5:
+            try:
+                cs_prev = _pt_float(nums[3])
+                cs_cur  = _pt_float(nums[4])
+                result[seq] = {"cs_cur": cs_cur, "cs_prev": cs_prev, "mon": mon, "day": day}
+            except Exception:
+                pass
+
+    return result
+
+
+def _decumulate(series: dict) -> dict:
+    """
+    De-acumula serie {seq: val_acumulado} → {seq: val_neto_quincena}.
+    net[primer_seq] = cum[primer_seq]; net[k] = cum[k] − cum[k-1].
+    """
+    if not series:
+        return {}
+    seqs = sorted(series.keys())
+    net = {}
+    for i, seq in enumerate(seqs):
+        if i == 0:
+            net[seq] = series[seq]
+        else:
+            net[seq] = series[seq] - series[seqs[i - 1]]
+    return net
+
+
 def save_unica_to_db(session, data: dict) -> bool:
     """
     Persiste datos del PDF quinzenal en unica_biweekly (region='CS').
-    Las unidades del PDF son Mt (millones de toneladas) y Ml (millones de litros).
-    Convertimos a toneladas / m³ para alinear con el schema histórico de Excels.
-    Retorna True si hubo upsert.
+
+    Parsea Tabelas 3-7 (serie acumulada), de-acumula a neto por quincena,
+    y hace upsert de cada quincena presente con datos per-quincena homogéneos
+    al Excel histórico. ATR y mix vienen de Tabela 1 (ya en data).
+    Retorna True si se guardó al menos una fila.
     """
     from sqlalchemy import text
+    from services.data_quality import validate_range, parse_log_warning
 
     safra = data.get("safra")
-    qdate = data.get("position_date")
-    if not safra or not qdate:
+    pdf_bytes = data.get("_pdf_bytes")
+    if not safra:
         return False
 
-    # PDF usa safra formato "2026/2027" — normalizar a "2026-2027"
     safra_norm = safra.replace("/", "-")
+    safra_start = int(safra_norm.split("-")[0])
 
-    # Convertir unidades (PDF: Mt → t; Ml → m³×1000)
-    def _mt_to_t(v_mt):
-        return int(round(v_mt * 1e6)) if v_mt is not None else None
+    # ATR y mix de Tabela 1 (última fila, misma para todas las quincenas del PDF)
+    atr = data.get("atr_kg_t")
+    emix = data.get("mix_ethanol_pct")
 
-    def _ml_to_m3(v_ml):
-        # PDF: "milhoes de litros" → m³ (1 litro = 0.001 m³)
+    if not pdf_bytes:
+        logger.warning("UNICA save_unica_to_db: sin _pdf_bytes, no se puede parsear Tabelas 3-7")
+        return False
+
+    try:
+        import io
+        import pdfplumber as _pdf
+        with _pdf.open(io.BytesIO(pdf_bytes)) as pdf:
+            full_text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        logger.error("UNICA save_unica_to_db: error leyendo PDF: %s", e)
+        return False
+
+    # Parsear Tabelas 3-7 (acumulado) y de-acumular
+    t3 = _parse_cumulative_table(full_text, 3)  # caña (mil t)
+    t4 = _parse_cumulative_table(full_text, 4)  # azúcar (mil t)
+    t5 = _parse_cumulative_table(full_text, 5)  # etanol total (Ml)
+    t6 = _parse_cumulative_table(full_text, 6)  # etanol anidro (Ml)
+    t7 = _parse_cumulative_table(full_text, 7)  # etanol hidratado (Ml)
+
+    cum_cane  = {seq: v["cs_cur"] for seq, v in t3.items()}
+    cum_sugar = {seq: v["cs_cur"] for seq, v in t4.items()}
+    cum_eth_t = {seq: v["cs_cur"] for seq, v in t5.items()}
+    cum_eth_a = {seq: v["cs_cur"] for seq, v in t6.items()}
+    cum_eth_h = {seq: v["cs_cur"] for seq, v in t7.items()}
+
+    net_cane  = _decumulate(cum_cane)
+    net_sugar = _decumulate(cum_sugar)
+    net_eth_t = _decumulate(cum_eth_t)
+    net_eth_a = _decumulate(cum_eth_a)
+    net_eth_h = _decumulate(cum_eth_h)
+
+    all_seqs = sorted(set(net_cane) | set(net_sugar))
+    if not all_seqs:
+        logger.warning("UNICA save_unica_to_db: Tabelas 3-7 vacías para %s", safra_norm)
+        return False
+
+    def _to_t(v_kt):
+        return int(round(v_kt * 1000)) if v_kt is not None else None
+
+    def _to_m3(v_ml):
         return int(round(v_ml * 1000)) if v_ml is not None else None
 
-    cane_t   = _mt_to_t(data.get("cane_cumulative_mt"))
-    sugar_t  = _mt_to_t(data.get("sugar_cumulative_mt"))
-    eth_t    = _ml_to_m3(data.get("ethanol_total_ml"))
-    eth_a    = _ml_to_m3(data.get("ethanol_anidro_ml"))
-    eth_h    = _ml_to_m3(data.get("ethanol_hidratado_ml"))
+    saved = 0
+    for seq in all_seqs:
+        mon, day = _SEASON_FORTNIGHTS[seq - 1]
+        year = safra_start if mon >= 4 else safra_start + 1
+        try:
+            from datetime import date as _date
+            qdate = _date(year, mon, day)
+        except ValueError:
+            continue
 
-    vals = {
-        "safra": safra_norm, "qdate": qdate, "reg": "CS",
-        "cane": cane_t, "sugar": sugar_t,
-        "eth_a": eth_a, "eth_h": eth_h, "eth_t": eth_t,
-        "atr": data.get("atr_kg_t"), "smix": None, "emix": data.get("mix_ethanol_pct"),
-        "let": None, "lan": None, "lhid": None,
-        "st": None, "si": None, "se": None,
-        "src": "pdf_unica",
-    }
+        raw_cane  = net_cane.get(seq)
+        raw_sugar = net_sugar.get(seq)
 
-    existing = session.execute(
-        text("SELECT id FROM unica_biweekly WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg"),
-        {"safra": safra_norm, "qdate": qdate, "reg": "CS"},
-    ).fetchone()
+        # Validar rangos (mil t → t después de conversión)
+        try:
+            if raw_cane is not None:
+                validate_range(raw_cane * 1000, min_value=0, max_value=80e6,
+                               source="unica_pdf", field="cane_net_t", allow_none=False)
+            if raw_sugar is not None:
+                validate_range(raw_sugar * 1000, min_value=0, max_value=6e6,
+                               source="unica_pdf", field="sugar_net_t", allow_none=False)
+            if atr is not None:
+                validate_range(atr, min_value=100, max_value=160,
+                               source="unica_pdf", field="atr_kg_ton", allow_none=False)
+        except Exception as ve:
+            parse_log_warning("unica_pdf", f"seq={seq} {qdate}", str(ve))
+            continue
 
-    if existing:
-        session.execute(
-            text("""
-                UPDATE unica_biweekly SET
-                    cane_crushed_t=:cane, sugar_t=:sugar,
-                    ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h, ethanol_total_m3=:eth_t,
-                    atr_kg_ton=:atr, eth_mix_pct=:emix, source=:src
-                WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
-            """),
-            vals,
-        )
-    else:
-        session.execute(
-            text("""
-                INSERT INTO unica_biweekly (
-                    safra, quinzena_date, region,
-                    cane_crushed_t, sugar_t,
-                    ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
-                    atr_kg_ton, sugar_mix_pct, eth_mix_pct,
-                    liters_eth_ton, liters_anidro_ton, liters_hidratado_ton,
-                    eth_sales_total_m3, eth_sales_internal_m3, eth_sales_external_m3,
-                    source
-                ) VALUES (
-                    :safra, :qdate, :reg,
-                    :cane, :sugar,
-                    :eth_a, :eth_h, :eth_t,
-                    :atr, :smix, :emix,
-                    :let, :lan, :lhid,
-                    :st, :si, :se,
-                    :src
-                )
-            """),
-            vals,
-        )
+        vals = {
+            "safra": safra_norm, "qdate": qdate, "reg": "CS",
+            "cane":  _to_t(raw_cane),
+            "sugar": _to_t(raw_sugar),
+            "eth_t": _to_m3(net_eth_t.get(seq)),
+            "eth_a": _to_m3(net_eth_a.get(seq)),
+            "eth_h": _to_m3(net_eth_h.get(seq)),
+            "atr":   atr,
+            "smix":  None,
+            "emix":  emix,
+            "src":   "pdf_unica",
+        }
+
+        existing = session.execute(
+            text("SELECT id FROM unica_biweekly WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg"),
+            {"safra": safra_norm, "qdate": qdate, "reg": "CS"},
+        ).fetchone()
+
+        if existing:
+            session.execute(
+                text("""
+                    UPDATE unica_biweekly SET
+                        cane_crushed_t=:cane, sugar_t=:sugar,
+                        ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h,
+                        ethanol_total_m3=:eth_t, atr_kg_ton=:atr,
+                        eth_mix_pct=:emix, source=:src
+                    WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
+                """),
+                vals,
+            )
+        else:
+            session.execute(
+                text("""
+                    INSERT INTO unica_biweekly (
+                        safra, quinzena_date, region,
+                        cane_crushed_t, sugar_t,
+                        ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
+                        atr_kg_ton, sugar_mix_pct, eth_mix_pct, source
+                    ) VALUES (
+                        :safra, :qdate, :reg,
+                        :cane, :sugar,
+                        :eth_a, :eth_h, :eth_t,
+                        :atr, :smix, :emix, :src
+                    )
+                """),
+                vals,
+            )
+        saved += 1
+        logger.info("UNICA DB: %s CS seq=%d %s cane_net=%.1fkt sugar_net=%.1fkt",
+                    safra_norm, seq, qdate,
+                    raw_cane or 0, raw_sugar or 0)
+
     session.commit()
-    logger.info("UNICA DB: guardado %s CS %s (source=pdf_unica)", safra_norm, qdate)
-    return True
+    logger.info("UNICA DB: %d quincenas guardadas para %s CS", saved, safra_norm)
+    return saved > 0
 
 
 def get_latest_unica() -> Optional[dict]:
@@ -337,6 +495,7 @@ def get_latest_unica() -> Optional[dict]:
     data = parse_unica_pdf(pdf_bytes)
     if data:
         data["idm_source"] = idm
+        data["_pdf_bytes"] = pdf_bytes
     return data
 
 
