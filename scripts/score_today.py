@@ -42,7 +42,10 @@ LABELS = {
 }
 
 # Layer 1: weekly bias — COT + structural market state
-LAYER1_KEYS = ["a1_spec_vs_mean", "b1_spread", "b2_price_vs_ma20"]
+# B2 backtest 18 años: LONG 20d=59.3%* (válido) | SHORT 47.6% (falla) → solo cuenta para LONG
+LAYER1_LONG_KEYS  = ["a1_spec_vs_mean", "b1_spread", "b2_price_vs_ma20"]
+LAYER1_SHORT_KEYS = ["a1_spec_vs_mean", "b1_spread"]
+LAYER1_KEYS       = LAYER1_LONG_KEYS  # alias para display (muestra las 3 filas)
 
 # Layer 2 auto signals
 LAYER2_SCORE_KEYS = ["b3_vwap", "c2_open_volume"]
@@ -335,9 +338,10 @@ def print_layer1(sl, sr, inputs):
         detail = _detail_for_key(key, inputs)
         print("  %-46s %s     %s%s" % (label, tl, tr, detail))
 
-    l1_l = _layer_sum(sl, LAYER1_KEYS)
-    l1_r = _layer_sum(sr, LAYER1_KEYS)
-    l1_valid = _layer_valid(sl, LAYER1_KEYS)
+    l1_l = _layer_sum(sl, LAYER1_LONG_KEYS)
+    l1_r = _layer_sum(sr, LAYER1_SHORT_KEYS)
+    l1_valid_l = _layer_valid(sl, LAYER1_LONG_KEYS)
+    l1_valid_r = _layer_valid(sr, LAYER1_SHORT_KEYS)
     print("-" * 72)
 
     if l1_l > l1_r:
@@ -350,16 +354,16 @@ def print_layer1(sl, sr, inputs):
         l1_dir = "NEUTRAL"
         l1_sc  = 0
 
-    strength = _strength(l1_sc, l1_valid)
+    strength = _strength(l1_sc, l1_valid_l if l1_dir == "LONG" else l1_valid_r)
     print("  %-46s LONG=%d/%d  SHORT=%d/%d   -> %s %s" % (
-        "Sesgo Capa 1:", l1_l, l1_valid, l1_r, l1_valid, l1_dir, strength))
+        "Sesgo Capa 1:", l1_l, l1_valid_l, l1_r, l1_valid_r, l1_dir, strength))
 
-    # Confianza OOS por direccion (validado 2023-2025)
+    # Confianza OOS backtest 18 años (2008-2026)
     if l1_dir == "SHORT":
-        print("  Confianza OOS: ALTA  (6/6 senales SHORT aguantan OOS 2023+)")
+        print("  Confianza OOS: ALTA  (A1+B1 SHORT validos OOS | B2 excluido: falla a 18 años)")
     elif l1_dir == "LONG":
-        print("  Confianza OOS: BAJA  (solo B2_Z26w + OI_DIV validos OOS en LONG)")
-        print("  [!] LONG requiere B2_Z26w z<-1.5 y/o OI_DIV activo para alta conviccion")
+        print("  Confianza OOS: MODERADA  (B2_Z26w swing 20d + OI_DIV validos | A1 LONG marginal)")
+        print("  [!] LONG requiere B2_Z26w z<-1.5 (precio oversold) para alta conviccion")
 
 
 def print_layer2(l2l, l2r, vp_dict, price, inputs=None, vwap_data=None):
@@ -481,8 +485,8 @@ def compute_combined_decision(sl, sr, l2l, l2r):
     Returns (direction, decision_str, rationale).
     decision_str: MAX_CONVICTION / STANDARD / REDUCED / NO_TRADE
     """
-    l1_l = _layer_sum(sl, LAYER1_KEYS)
-    l1_r = _layer_sum(sr, LAYER1_KEYS)
+    l1_l = _layer_sum(sl, LAYER1_LONG_KEYS)
+    l1_r = _layer_sum(sr, LAYER1_SHORT_KEYS)
 
     l2_la = _layer_sum(l2l, LAYER2_AUTO_KEYS)
     l2_ra = _layer_sum(l2r, LAYER2_AUTO_KEYS)
@@ -510,7 +514,7 @@ def compute_combined_decision(sl, sr, l2l, l2r):
         return l2_dir, "NO_TRADE", "L2 insuficiente (%d/%d)" % (l2_sc, l2_valid)
 
     # L1 alignment
-    l1_valid = _layer_valid(sl, LAYER1_KEYS)
+    l1_valid = _layer_valid(sl, LAYER1_LONG_KEYS) if l2_dir == "LONG" else _layer_valid(sr, LAYER1_SHORT_KEYS)
     l1_str   = _strength(l1_sc, l1_valid)
     l1_conflict = l1_opp > l1_sc
 
@@ -1545,8 +1549,8 @@ def run():
     print_layer1(scores_l, scores_r, inputs)
 
     # Macro intraday: BRL/USD + Brent + correlación (dirección sugerida por L1)
-    l1_l_sum = _layer_sum(scores_l, LAYER1_KEYS)
-    l1_r_sum = _layer_sum(scores_r, LAYER1_KEYS)
+    l1_l_sum = _layer_sum(scores_l, LAYER1_LONG_KEYS)
+    l1_r_sum = _layer_sum(scores_r, LAYER1_SHORT_KEYS)
     l1_dir_hint = "LONG" if l1_l_sum >= l1_r_sum else "SHORT"
     try:
         macro = compute_macro_signals(l1_dir_hint, session=session)

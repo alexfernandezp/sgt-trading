@@ -282,12 +282,12 @@ def main():
     print("=== WIN RATE POR CRITERIO (5d / 10d / 20d) ===")
     print_criteria(df, horizons, criteria)
 
-    # Score L1: LONG=A1+A2+A3 (B2 excluido en LONG: señal lenta, 47% a 5d)
-    #           SHORT=A1+A2+A3+B2 (B2_Z26w SHORT funciona en todos los horizontes: 60%)
-    df["l1_long"]  = df[["a1_long","a2_long","a3_long"]].sum(axis=1, min_count=1)
-    df["l1_short"] = df[["a1_short","a2_short","a3_short","b2_short"]].sum(axis=1, min_count=1)
+    # Score L1: LONG=A1+A2+A3+B2 (B2 válido LONG 20d=59.3% en 18 años)
+    #           SHORT=A1+A2+A3    (B2 SHORT falla: 47.6% en muestra 18 años)
+    df["l1_long"]  = df[["a1_long","a2_long","a3_long","b2_long"]].sum(axis=1, min_count=1)
+    df["l1_short"] = df[["a1_short","a2_short","a3_short"]].sum(axis=1, min_count=1)
     print_score(df, horizons, "l1_long", "l1_short",
-                "SCORE L1 (LONG=A1+A2+A3 | SHORT=A1+A2+A3+B2)")
+                "SCORE L1 (LONG=A1+A2+A3+B2 | SHORT=A1+A2+A3)")
 
     # B2 LONG como señal swing de horizonte extendido (20d)
     sub_b2l = df[df["b2_long"] == 1]
@@ -374,12 +374,12 @@ def main():
     print("  LONG : %d/%d senales con WR>=53%% OOS  ->  %s" % (
         oos_ok_long, n_crit,
         "ALTA CONFIANZA" if oos_ok_long >= 4 else ("MODERADA" if oos_ok_long >= 2 else "BAJA")))
-    print("  Senales LONG validas OOS: B2_Z26w (swing 20d), OI_DIV")
-    print("  Senales SHORT validas OOS: A1, A2, A3, B2_Z26w, MM, OI_DIV")
+    print("  Senales LONG  validas OOS: B2_Z26w (swing 20d), OI_DIV")
+    print("  Senales SHORT validas OOS: A1, A2, A3, MM, OI_DIV  [B2 excluido: falla 18 años]")
     print()
 
     if args.detail:
-        cols = ["date","regime","a1_long","a2_long","a3_long","b2_short","b2_long"]
+        cols = ["date","regime","a1_long","a2_long","a3_long","b2_long","b2_short"]
         if has_mm: cols.insert(4,"mm_long")
         cols += ["fwd_5d","fwd_10d","fwd_20d"]
         print("\n=== DETALLE ===")
