@@ -281,8 +281,8 @@ def _read_tb09(ws) -> dict:
             continue
         out[(safra, qdate, region)] = {
             "atr_kg_ton":           _to_float(row[4]),
-            "sugar_mix_pct":        _to_float(row[5]),
-            "eth_mix_pct":          _to_float(row[6]),
+            "sugar_mix_pct":        _to_pct(row[5]),
+            "eth_mix_pct":          _to_pct(row[6]),
             "liters_eth_ton":       _to_float(row[8]),
             "liters_anidro_ton":    _to_float(row[9]),
             "liters_hidratado_ton": _to_float(row[10]),
