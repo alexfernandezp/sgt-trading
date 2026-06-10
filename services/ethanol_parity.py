@@ -48,6 +48,11 @@ ATR_FACTOR  = 1.4966       # ton VHP azúcar equivalente por m³ etanol hidratad
 BAG_KG      = 50           # bolsa CEPEA = 50 kg → 20 bolsas/ton
 LBS_PER_TON = 2204.62      # lbs por tonelada métrica
 
+# Ajuste terminal→ex-mill para CEPEA Paulínia (metodología Green Pool)
+# CEPEA Paulínia mide precio en terminal de distribución; ex-mill es ~R$0.14/L superior
+# (costo de flete interior SP: ~R$120-160/m³ según diesel). Fuente: Green Pool methodology.
+CEPEA_PAULINIA_TO_EXMILL_BRL_L = 0.14   # R$/L ajuste terminal → puerta de usina
+
 # Umbrales calibrados sobre distribución histórica 2010-2026 (N=3947 días)
 # Media ratio: 0.9011  |  Mediana: 0.8858  |  Std: 0.1730
 #
@@ -357,6 +362,153 @@ def compute_ethanol_parity(
                 result["description"] = (
                     f"Paridad etanol/cristal = {phys:.3f} — neutral (sin precio ICE)"
                 )
+
+    return result
+
+
+def compute_ethanol_parity_v2(
+    session,
+    ice_price_c_lb: Optional[float] = None,
+) -> dict:
+    """
+    Paridad etanol/azúcar SP — metodología Green Pool.
+
+    Fuente precio etanol (por prioridad):
+      1. UNICADATA SP hidratado (ex-mill, BRL/L) + BCB PTAX  ← más exacto
+      2. CEPEA Paulínia (USD/m³, terminal)                   ← fallback diario
+
+    Conversión c/lb: (usd_m3 / 1000) × 660 / 22.0462
+      - Factor 660 L/ton = Green Pool standard
+      - Equivalente a 1 MT azúcar = 660 L etanol hidratado
+
+    Gap convention (mismo que Green Pool):
+      spread = ethanol_c_lb - ice_c_lb
+        > 0 → etanol más caro → molinos prefieren etanol → bearish azúcar
+        < 0 → azúcar más caro → molinos prefieren azúcar → bullish azúcar
+
+    Returns dict completo, compatible con save_parity_snapshot().
+    """
+    result: dict = {
+        "hydrous_source":    None,
+        "hydrous_brl_liter": None,
+        "hydrous_usd_m3":    None,
+        "ptax_used":         None,
+        "ethanol_c_lb":      None,
+        "ice_c_lb":          None,
+        "spread_c_lb":       None,
+        "parity_ratio":      None,
+        "signal":            0,
+        "bias":              "NEUTRAL",
+        "description":       "Paridad etanol: sin datos",
+    }
+
+    # ── 1. Precio etanol ──────────────────────────────────────────────────────
+    usd_m3: Optional[float] = None
+
+    # Intentar UNICADATA (BRL/L → USD/m³ con PTAX)
+    try:
+        from ingestion.bcb_ptax import fetch_ptax
+        from sqlalchemy import text
+
+        uni_row = session.execute(text(
+            "SELECT price_usd, price_date FROM cepea_prices "
+            "WHERE series_name = 'unicadata_sp_hydrous_brl_liter' "
+            "ORDER BY price_date DESC LIMIT 1"
+        )).fetchone()
+
+        if uni_row and uni_row[0]:
+            brl_liter = float(uni_row[0])
+            ptax = fetch_ptax()   # BCB PTAX hoy
+            if ptax and ptax > 0:
+                usd_m3 = (brl_liter * 1000) / ptax
+                result["hydrous_source"]    = "unicadata"
+                result["hydrous_brl_liter"] = round(brl_liter, 4)
+                result["hydrous_usd_m3"]    = round(usd_m3, 2)
+                result["ptax_used"]         = round(ptax, 5)
+                logger.debug(
+                    "ethanol_parity_v2: UNICADATA %.4f BRL/L / %.5f PTAX = %.2f USD/m3",
+                    brl_liter, ptax, usd_m3,
+                )
+    except Exception as e:
+        logger.warning("ethanol_parity_v2: UNICADATA/PTAX fallido: %s", e)
+
+    # Fallback CEPEA Paulínia (USD/m³ directo) + ajuste terminal→ex-mill
+    if usd_m3 is None:
+        try:
+            from sqlalchemy import text
+            from ingestion.bcb_ptax import fetch_ptax
+            row = session.execute(text(
+                "SELECT price_usd, price_date FROM cepea_prices "
+                "WHERE series_name = 'hydrous_paulinia_usd_m3' "
+                "ORDER BY price_date DESC LIMIT 1"
+            )).fetchone()
+            if row and row[0]:
+                cepea_usd_m3 = float(row[0])
+                # Aplicar ajuste terminal→ex-mill usando PTAX actual
+                ptax = fetch_ptax() or 5.20
+                adj_usd_m3 = CEPEA_PAULINIA_TO_EXMILL_BRL_L * 1000 / ptax
+                usd_m3 = cepea_usd_m3 + adj_usd_m3
+                result["hydrous_source"]    = "cepea_paulinia_adj"
+                result["hydrous_usd_m3"]    = round(usd_m3, 2)
+                result["hydrous_brl_liter"] = round((usd_m3 * ptax) / 1000, 4)
+                result["ptax_used"]         = round(ptax, 5)
+                logger.debug(
+                    "ethanol_parity_v2: CEPEA %.2f + adj %.2f = %.2f USD/m3 (PTAX %.4f)",
+                    cepea_usd_m3, adj_usd_m3, usd_m3, ptax,
+                )
+        except Exception as e:
+            logger.warning("ethanol_parity_v2: CEPEA fallback fallido: %s", e)
+
+    if usd_m3 is None or usd_m3 <= 0:
+        result["description"] = "Paridad etanol: sin precio hidratado disponible"
+        return result
+
+    # ── 2. Convertir a c/lb (metodología Green Pool) ─────────────────────────
+    # (USD/m3 / 1000 L/m3) × 660 L/ton ÷ 22.0462 ton/lb × 100 c/$
+    ethanol_c_lb = (usd_m3 / 1000) * 660 / 22.0462
+    result["ethanol_c_lb"] = round(ethanol_c_lb, 4)
+
+    # ── 3. Precio ICE No.11 ───────────────────────────────────────────────────
+    if ice_price_c_lb is None:
+        ice_price_c_lb = _get_ice_price_yf()
+
+    if not ice_price_c_lb or ice_price_c_lb <= 0:
+        result["description"] = f"Paridad etanol: eth={ethanol_c_lb:.4f} c/lb (sin ICE)"
+        return result
+
+    result["ice_c_lb"]   = round(ice_price_c_lb, 4)
+    result["spread_c_lb"] = round(ethanol_c_lb - ice_price_c_lb, 4)
+
+    # ── 4. Ratio y señal ──────────────────────────────────────────────────────
+    ice_usd_ton     = (ice_price_c_lb / 100) * LBS_PER_TON
+    ethanol_usd_ton = (ethanol_c_lb / 100) * LBS_PER_TON
+    if ice_usd_ton > 0:
+        ratio = ethanol_usd_ton / ice_usd_ton
+        result["parity_ratio"] = round(ratio, 4)
+
+        if ratio >= PARITY_BULLISH:
+            result["signal"] = -1   # molinos prefieren etanol → bearish azúcar
+            result["bias"]   = "BEARISH"
+            result["description"] = (
+                f"SP eth={ethanol_c_lb:.2f} NY11={ice_price_c_lb:.2f} "
+                f"gap={result['spread_c_lb']:+.2f} ratio={ratio:.3f} "
+                f"[>{PARITY_BULLISH}] → molinos prefieren ETANOL → bearish azúcar"
+            )
+        elif ratio <= PARITY_BEARISH:
+            result["signal"] = 1    # molinos prefieren azúcar → bullish azúcar
+            result["bias"]   = "BULLISH"
+            result["description"] = (
+                f"SP eth={ethanol_c_lb:.2f} NY11={ice_price_c_lb:.2f} "
+                f"gap={result['spread_c_lb']:+.2f} ratio={ratio:.3f} "
+                f"[<{PARITY_BEARISH}] → molinos prefieren AZÚCAR → bullish azúcar"
+            )
+        else:
+            result["signal"] = 0
+            result["bias"]   = "NEUTRAL"
+            result["description"] = (
+                f"SP eth={ethanol_c_lb:.2f} NY11={ice_price_c_lb:.2f} "
+                f"gap={result['spread_c_lb']:+.2f} ratio={ratio:.3f} [NEUTRAL]"
+            )
 
     return result
 
