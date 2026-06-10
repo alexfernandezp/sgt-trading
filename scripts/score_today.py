@@ -286,10 +286,10 @@ def _build_layer2(session, scores, mtf, vp_dict, price, direction, vwap_data=Non
 
 def _detail_for_key(key, inputs):
     if key == "a1_spec_vs_mean" and "mm_net" in inputs:
-        return "  MM={:+,}  P3yr={:.0f}%  Δ1wk={:+,} z={:+.2f} {}  →  {} ({})".format(
+        return "  MM={:+,} P3yr={:.0f}% | Spec Δ1wk={:+,} z={:+.2f} {}  →  {} ({})".format(
             inputs["mm_net"],
             inputs.get("mm_pct_3yr", 0),
-            inputs.get("mm_change_1wk", 0),
+            inputs.get("spec_change_1wk", 0),
             inputs.get("mm_weekly_z", 0),
             inputs.get("velocity_class", ""),
             inputs.get("composite_state", ""),
@@ -1449,17 +1449,21 @@ def print_trade_card(setup, bt, ez=None, vp=None, ms=None):
             "CAPITULACION_LARGA":  "Extremo largo + specs aún acumulando  → SHORT maxima convicción (crowding)",
         }
 
-        print("\n  -- CONTEXTO COT (nivel × velocidad) --")
+        spec_net_val = setup.get("cot_spec_net")
+        spec_chg1wk  = setup.get("cot_spec_change_1wk")
+
+        print("\n  -- CONTEXTO COT (nivel MM × velocidad Spec) --")
         print("  {}".format(ctx_str))
-        print("  MM net actual    : {:+,}".format(net))
-        print("  Rango 3yr        : {:+,} … {:+,}  |  P3yr={:.0f}%  |  P1yr={:.0f}%".format(
-            hist_min, hist_max, pct, r52 or 0))
-        print("  Nivel            : {}".format(lv_reg))
-        if chg1wk is not None:
-            dir1 = "cubriendo/acumulando largos" if chg1wk > 0 else "añadiendo cortos/liquidando largos"
-            print("  Δ 1 semana       : {:+,}  ({})".format(chg1wk, dir1))
+        print("  MM net (hedge funds/CTAs) : {:+,}  P3yr={:.0f}%  rango 3yr [{:+,}…{:+,}]".format(
+            net, pct, hist_min or 0, hist_max or 0))
+        if spec_net_val is not None:
+            print("  Spec net (NC+NonRep)      : {:+,}  (idioma sector/Alvean)".format(spec_net_val))
+        print("  Nivel                     : {}  |  P1yr={:.0f}%".format(lv_reg, r52 or 0))
+        if spec_chg1wk is not None:
+            dir1 = "cubriendo/acumulando largos" if spec_chg1wk > 0 else "añadiendo cortos/liquidando largos"
+            print("  Spec Δ 1 semana           : {:+,}  ({})".format(spec_chg1wk, dir1))
         if wkz is not None:
-            print("  z velocidad      : {:+.2f}  →  {}".format(wkz, vel_cls))
+            print("  z velocidad (spec)        : {:+.2f}  →  {}  [85% OOS WR si GRAN_REDUCCION]".format(wkz, vel_cls))
         if t4wk is not None:
             dir_t = "subiendo" if t4wk > 0 else "bajando"
             print("  Tendencia MA4s   : {:+,}  ({})".format(t4wk, dir_t))

@@ -1,17 +1,19 @@
 """
-COT Signal — level × velocity composite model, CFTC Managed Money (Disaggregated).
+COT Signal — modelo compuesto HÍBRIDO: nivel MM × velocidad Spec.
 
-Dos dimensiones ortogonales combinadas via matriz de interacción:
-  Nivel     : percentil rolling 3yr de mm_net — DONDE están posicionados los specs
-  Velocidad : z-score del cambio semanal vs std rolling 3yr — COMO DE RÁPIDO se mueven
+Backtest comparativo 18yr (N=979) mostró que cada serie tiene ventaja en una dimensión:
 
-El insight clave (backtest 18yr, N=979 semanas IS+OOS):
-  - Nivel solo    (EXTREME_SHORT → LONG) : 57% WR gap Vie→Lun, consistente OOS
-  - Velocidad sola (GRAN_REDUCCION)      : 71% WR gap Vie→Lun, consistente OOS
-  - Combo (EXTREME_SHORT + GRAN_REDUCCION = CAPITULACION_CORTA) : 67% WR, N=18
+  NIVEL     → MM net (Disaggregated, hedge funds/CTAs puros):
+              excluye commodity-index money pasivo y retail noise.
+              OOS: EXTREME_SHORT LONG=56%, EXTREME_LONG SHORT=42% (vs SPEC 55%/32%)
 
-La velocidad contextualiza el nivel: reducción de 30k desde -256k (máx corto) es
-cualitativamente distinto a reducción de 30k desde posición neutral.
+  VELOCIDAD → Spec net (Legacy NC+NonRep, idioma del sector):
+              al capturar más actores (retail incluido), la capitulación colectiva
+              es más diagnóstica del agotamiento.
+              OOS: GRAN_REDUCCION LONG=85% (vs MM 71%) — el WR más alto del sistema
+
+La velocidad contextualiza el nivel: reducción de 30k desde -256k (máx corto)
+es cualitativamente distinto a reducción de 30k desde posición neutral.
 
 Ref: Negrini de Mattos & Correa (SSRN 4651233) — contrarian COT soft commodities
 """
@@ -77,7 +79,7 @@ _STARS = {3: "★★★", 2: "★★ ", 1: "★  ", 0: "   "}
 
 @dataclass
 class CotSignal:
-    # Nivel
+    # Nivel — MM net (Disaggregated)
     mm_net:          int
     mm_pct_3yr:      float
     mm_pct_1yr:      float
@@ -87,12 +89,14 @@ class CotSignal:
     mm_3yr_max:      int
     mm_n_weeks:      int
 
-    # Velocidad
-    mm_change_1wk:   int
+    # Velocidad — Spec net (Legacy NC+NonRep): 85% OOS WR GRAN_REDUCCION
+    spec_net:        int     # referencia industria (idioma del sector)
+    spec_change_1wk: int     # cambio semanal spec_net (base del weekly_z)
+    mm_change_1wk:   int     # cambio semanal mm_net (contexto adicional)
     mm_change_4wk:   int
     mm_trend_4wk:    float
-    mm_weekly_z:     float   # cambio esta semana vs distribución 3yr rolling
-    mm_velocity_std: float   # std de cambios semanales (contexto para z)
+    mm_weekly_z:     float   # z-score sobre spec_net (ver docstring del módulo)
+    mm_velocity_std: float   # std de cambios spec_net (contexto para z)
 
     # Compuesto
     level_regime:    str     # EXTREME_SHORT | DEPRESSED | NEUTRAL | ELEVATED | EXTREME_LONG
@@ -123,7 +127,7 @@ def _velocity(z: float) -> str:
 def get_cot_signal(session: Session) -> CotSignal:
     """Única fuente de verdad COT para el sistema. Llama solo desde aquí."""
     rows = session.execute(text(
-        "SELECT mm_net FROM cot_data "
+        "SELECT mm_net, speculator_net FROM cot_data "
         "WHERE mm_net IS NOT NULL "
         "ORDER BY report_date DESC "
         f"LIMIT {WINDOW_WEEKS + 10}"
@@ -133,20 +137,23 @@ def get_cot_signal(session: Session) -> CotSignal:
         logger.warning("cot_signal | datos insuficientes: %d semanas", len(rows))
         return _insufficient()
 
-    vals    = [float(r[0]) for r in rows]
-    v3      = vals[:WINDOW_WEEKS]   # ventana 3yr
+    mm_vals   = [float(r[0]) for r in rows]
+    spec_vals = [float(r[1]) for r in rows if r[1] is not None]
+
+    v3      = mm_vals[:WINDOW_WEEKS]
     current = v3[0]
     n       = len(v3)
 
-    # ── Nivel ────────────────────────────────────────────────────────────────
-    pct_3yr     = sum(1 for v in v3 if v <= current) / n * 100
-    v1yr        = v3[:min(52, n)]
-    pct_1yr     = sum(1 for v in v1yr if v <= current) / len(v1yr) * 100
-    all_rows    = session.execute(text(
+    # ── Nivel: MM net (Disaggregated) ────────────────────────────────────────
+    pct_3yr = sum(1 for v in v3 if v <= current) / n * 100
+    v1yr    = v3[:min(52, n)]
+    pct_1yr = sum(1 for v in v1yr if v <= current) / len(v1yr) * 100
+
+    all_rows = session.execute(text(
         "SELECT mm_net FROM cot_data WHERE mm_net IS NOT NULL ORDER BY report_date DESC"
     )).fetchall()
-    all_vals    = [float(r[0]) for r in all_rows]
-    pct_all     = sum(1 for v in all_vals if v <= current) / len(all_vals) * 100
+    all_vals = [float(r[0]) for r in all_rows]
+    pct_all  = sum(1 for v in all_vals if v <= current) / len(all_vals) * 100
 
     try:
         from services.stats_utils import robust_stats
@@ -154,21 +161,28 @@ def get_cot_signal(session: Session) -> CotSignal:
     except Exception:
         mm_modified_z = None
 
-    # ── Velocidad ────────────────────────────────────────────────────────────
-    changes = [v3[i] - v3[i + 1] for i in range(n - 1)]
-    cur_chg = v3[0] - v3[1] if n >= 2 else 0.0
-
-    if len(changes) >= 4:
-        c_mean  = sum(changes) / len(changes)
-        c_std   = (sum((c - c_mean) ** 2 for c in changes) / len(changes)) ** 0.5
-        weekly_z = (cur_chg - c_mean) / c_std if c_std > 0 else 0.0
-    else:
-        c_std, weekly_z = 0.0, 0.0
-
-    ma4_now  = sum(v3[:4]) / 4
-    ma4_prev = sum(v3[1:5]) / 4 if n >= 5 else ma4_now
+    # MM: tendencia 4w y cambio 4w (contexto)
+    ma4_now   = sum(v3[:4]) / 4
+    ma4_prev  = sum(v3[1:5]) / 4 if n >= 5 else ma4_now
     trend_4wk = ma4_now - ma4_prev
+    mm_chg1w  = int(v3[0] - v3[1]) if n >= 2 else 0
     chg_4wk   = v3[0] - v3[min(4, n - 1)]
+
+    # ── Velocidad: Spec net (Legacy NC+NonRep) ───────────────────────────────
+    # Backtest comparativo: GRAN_REDUCCION LONG OOS WR = 85% spec vs 71% mm.
+    # La liquidación colectiva (retail + hedge fund juntos) es más diagnóstica
+    # del agotamiento que solo mm_net.
+    sv3      = spec_vals[:WINDOW_WEEKS]
+    spec_cur = sv3[0] if sv3 else 0
+    s_chg1w  = int(sv3[0] - sv3[1]) if len(sv3) >= 2 else 0
+
+    if len(sv3) >= 4:
+        s_changes = [sv3[i] - sv3[i + 1] for i in range(len(sv3) - 1)]
+        s_mean    = sum(s_changes) / len(s_changes)
+        s_std     = (sum((c - s_mean) ** 2 for c in s_changes) / len(s_changes)) ** 0.5
+        weekly_z  = (s_chg1w - s_mean) / s_std if s_std > 0 else 0.0
+    else:
+        s_std, weekly_z = 0.0, 0.0
 
     # ── Compuesto ────────────────────────────────────────────────────────────
     lv  = _level(pct_3yr)
@@ -176,11 +190,11 @@ def get_cot_signal(session: Session) -> CotSignal:
     cs  = _MATRIX[(lv, vel)]
     sl, ss, conv = _SIGNALS[cs]
 
-    stars = _STARS[conv]
+    stars  = _STARS[conv]
     dirstr = "LONG" if sl else ("SHORT" if ss else "NEUTRO")
     ctx_str = (
         f"MM={int(current):+,} P3yr={pct_3yr:.0f}% {lv} | "
-        f"Δ1wk={int(cur_chg):+,} z={weekly_z:+.2f} {vel} "
+        f"Spec Δ1wk={s_chg1w:+,} z={weekly_z:+.2f} {vel} "
         f"→ {cs} ({dirstr} {stars})"
     )
     logger.debug("cot_signal | %s", ctx_str)
@@ -194,11 +208,13 @@ def get_cot_signal(session: Session) -> CotSignal:
         mm_3yr_min=int(min(v3)),
         mm_3yr_max=int(max(v3)),
         mm_n_weeks=n,
-        mm_change_1wk=int(cur_chg),
+        spec_net=int(spec_cur),
+        spec_change_1wk=s_chg1w,
+        mm_change_1wk=mm_chg1w,
         mm_change_4wk=int(chg_4wk),
         mm_trend_4wk=round(trend_4wk),
         mm_weekly_z=round(weekly_z, 3),
-        mm_velocity_std=round(c_std),
+        mm_velocity_std=round(s_std),
         level_regime=lv,
         velocity_class=vel,
         composite_state=cs,
@@ -213,6 +229,7 @@ def _insufficient() -> CotSignal:
     return CotSignal(
         mm_net=0, mm_pct_3yr=50.0, mm_pct_1yr=50.0, mm_pct_alltime=50.0,
         mm_modified_z=None, mm_3yr_min=0, mm_3yr_max=0, mm_n_weeks=0,
+        spec_net=0, spec_change_1wk=0,
         mm_change_1wk=0, mm_change_4wk=0, mm_trend_4wk=0.0,
         mm_weekly_z=0.0, mm_velocity_std=0.0,
         level_regime="INSUFFICIENT_DATA", velocity_class="NORMAL",
