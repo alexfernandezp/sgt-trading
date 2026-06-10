@@ -610,6 +610,60 @@ class SgtBalanceForecast(Base):
     )
 
 
+class EthanolParityDaily(Base):
+    """
+    Snapshot diario de paridad etanol/azúcar SP — metodología Green Pool.
+
+    Fuente primaria : UNICADATA SP hidratado (ex-mill, BRL/L) + BCB PTAX
+    Fuente fallback : CEPEA Paulínia (terminal USD/m³)
+    Conversión      : (usd_m3 / 1000) × 660 / 22.0462  →  c/lb
+    Factor 660 L/ton: standard Green Pool (vs Consecana 668 L/ton)
+
+    Gap convention  : spread = ethanol_c_lb - ice_c_lb
+      > 0  → etanol > azúcar → molinos prefieren etanol → bearish azúcar
+      < 0  → azúcar > etanol → molinos prefieren azúcar → bullish azúcar
+    """
+    __tablename__        = "ethanol_parity_daily"
+    id                   = Column(Integer, primary_key=True)
+    parity_date          = Column(Date, nullable=False)
+    # Precio etanol
+    hydrous_source       = Column(String(30))          # 'unicadata' | 'cepea_paulinia'
+    hydrous_brl_liter    = Column(Numeric(8, 4))       # BRL/L raw (UNICADATA)
+    hydrous_usd_m3       = Column(Numeric(10, 4))      # USD/m³ convertido con ptax
+    ptax_used            = Column(Numeric(10, 5))      # BRL/USD rate BCB
+    # Valores calculados
+    ethanol_c_lb         = Column(Numeric(8, 4))       # equiv. azúcar en c/lb
+    ice_c_lb             = Column(Numeric(8, 4))       # NY#11 futures
+    spread_c_lb          = Column(Numeric(8, 4))       # ethanol_c_lb - ice_c_lb
+    weekly_change_eth    = Column(Numeric(8, 4))       # Δ ethanol_c_lb vs 7 días antes
+    weekly_change_spread = Column(Numeric(8, 4))       # Δ spread vs 7 días antes
+    # Señal
+    parity_ratio         = Column(Numeric(8, 4))       # ethanol_usd_ton / ice_usd_ton
+    signal               = Column(Integer)             # +1 LONG / 0 NEUTRAL / -1 SHORT
+    bias                 = Column(String(20))
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    __table_args__       = (UniqueConstraint("parity_date", name="uq_ethanol_parity_date"),)
+
+
+class PipelineRunLog(Base):
+    """
+    Registro de ejecución de cada pipeline automático.
+    Permite auditar fallos, latencias y volumen de datos ingestados.
+    Escrito por cada script en scripts/run_*.py al finalizar.
+    """
+    __tablename__ = "pipeline_run_log"
+    id          = Column(Integer, primary_key=True)
+    run_ts      = Column(DateTime, nullable=False, default=datetime.utcnow)
+    task_name   = Column(String(50), nullable=False)   # 'morning'|'cot'|'weekly_ndvi'|...
+    script      = Column(String(100))
+    status      = Column(String(10))                   # 'ok'|'error'|'partial'
+    duration_s  = Column(Numeric(8, 1))
+    details     = Column(JSON)                         # {rows_fetched, errors, key_metrics}
+    error_msg   = Column(Text)
+    log_file    = Column(String(255))
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
 class UsdaPsdRecord(Base):
     """
     USDA FAS PSD (Production, Supply and Distribution) — balance global azúcar.
@@ -632,4 +686,37 @@ class UsdaPsdRecord(Base):
     __table_args__   = (
         UniqueConstraint("commodity_code", "country_code", "marketing_year",
                          "attribute_id", "pub_month", name="uq_usda_psd"),
+    )
+
+
+class UnicaBiweekly(Base):
+    """
+    Datos quinzenales UNICA Centro-Sul Brasil.
+    Fuentes: backfill desde Excels históricos (2010-2025) + PDFs quincenales nuevos.
+    Región: 'SP' | 'OTHER' | 'CS' (CS = SP + OTHER, calculado en import).
+    Cantidades: cana/azucar en toneladas; etanol en m³; atr en kg/ton.
+    """
+    __tablename__         = "unica_biweekly"
+    id                    = Column(Integer, primary_key=True)
+    safra                 = Column(String(9),  nullable=False)   # "2026-2027"
+    quinzena_date         = Column(Date,       nullable=False)   # fecha inicio quincena
+    region                = Column(String(5),  nullable=False)   # SP/OTHER/CS
+    cane_crushed_t        = Column(BigInteger)                   # toneladas
+    sugar_t               = Column(BigInteger)                   # toneladas
+    ethanol_anidro_m3     = Column(Integer)                      # m³
+    ethanol_hidratado_m3  = Column(Integer)                      # m³
+    ethanol_total_m3      = Column(Integer)                      # m³
+    atr_kg_ton            = Column(Numeric(8, 4))                # kg ATR / ton caña
+    sugar_mix_pct         = Column(Numeric(7, 4))                # % destinado a azúcar
+    eth_mix_pct           = Column(Numeric(7, 4))                # % destinado a etanol
+    liters_eth_ton        = Column(Numeric(8, 4))                # L etanol total / ton caña
+    liters_anidro_ton     = Column(Numeric(8, 4))
+    liters_hidratado_ton  = Column(Numeric(8, 4))
+    eth_sales_total_m3    = Column(Integer)                      # TB_10 ventas etanol
+    eth_sales_internal_m3 = Column(Integer)
+    eth_sales_external_m3 = Column(Integer)
+    source                = Column(String(20))                   # 'excel_unica'|'pdf_unica'
+    created_at            = Column(DateTime, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("safra", "quinzena_date", "region", name="uq_unica_biweekly"),
     )

@@ -5,6 +5,7 @@ from .market_data import (
     OniIndex, ClimateDaily, NdviSentinel,
     ComexStatExport, InpeFire, ParanaguaPortSnapshot, GeeMetric,
     ConabCanaLevantamento, SignalDailyLog, UsdaPsdRecord,
+    EthanolParityDaily, PipelineRunLog, UnicaBiweekly,
 )
 from .positions import Position, ClosedTrade
 from .scoring import DailyScoring
@@ -18,6 +19,7 @@ __all__ = [
     "OniIndex", "ClimateDaily", "NdviSentinel",
     "ComexStatExport", "InpeFire", "ParanaguaPortSnapshot", "GeeMetric",
     "ConabCanaLevantamento", "SignalDailyLog", "UsdaPsdRecord",
+    "EthanolParityDaily", "PipelineRunLog", "UnicaBiweekly",
     "Position", "ClosedTrade",
     "DailyScoring",
     "DailyPnl",
