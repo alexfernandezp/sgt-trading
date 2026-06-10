@@ -62,13 +62,15 @@ def _pt_float(s: str) -> float:
 
 def scrape_latest_idm() -> Optional[int]:
     """Obtiene el ID del documento mas reciente del reporte quinzenal.
-    Toma el idM MAS ALTO de la pagina (no el primero) porque el ID numerico
-    es incremental — el mayor siempre es el mas reciente."""
+    La pagina listagem.php?idMn=63 muestra solo el reporte activo — tomamos
+    el PRIMER link download_media que aparece, que es el que el sitio presenta
+    como documento actual. No usamos max() porque los IDs no son estrictamente
+    incrementales en orden de publicacion."""
     try:
         r = httpx.get(_LISTAGEM_URL, headers=_HEADERS, timeout=20, follow_redirects=True)
         matches = re.findall(r"download_media\.php\?idM=(\d+)", r.text)
         if matches:
-            return max(int(m) for m in matches)
+            return int(matches[0])
         logger.warning("UNICA: no se encontro idM en %s", _LISTAGEM_URL)
     except Exception as e:
         logger.warning("UNICA scrape idM: %s", e)
@@ -230,6 +232,91 @@ def parse_unica_pdf(pdf_bytes: bytes) -> Optional[dict]:
         result.get("projected_full_year_mt", "N/D"),
     )
     return result
+
+
+def save_unica_to_db(session, data: dict) -> bool:
+    """
+    Persiste datos del PDF quinzenal en unica_biweekly (region='CS').
+    Las unidades del PDF son Mt (millones de toneladas) y Ml (millones de litros).
+    Convertimos a toneladas / m³ para alinear con el schema histórico de Excels.
+    Retorna True si hubo upsert.
+    """
+    from sqlalchemy import text
+
+    safra = data.get("safra")
+    qdate = data.get("position_date")
+    if not safra or not qdate:
+        return False
+
+    # PDF usa safra formato "2026/2027" — normalizar a "2026-2027"
+    safra_norm = safra.replace("/", "-")
+
+    # Convertir unidades (PDF: Mt → t; Ml → m³×1000)
+    def _mt_to_t(v_mt):
+        return int(round(v_mt * 1e6)) if v_mt is not None else None
+
+    def _ml_to_m3(v_ml):
+        # PDF: "milhoes de litros" → m³ (1 litro = 0.001 m³)
+        return int(round(v_ml * 1000)) if v_ml is not None else None
+
+    cane_t   = _mt_to_t(data.get("cane_cumulative_mt"))
+    sugar_t  = _mt_to_t(data.get("sugar_cumulative_mt"))
+    eth_t    = _ml_to_m3(data.get("ethanol_total_ml"))
+    eth_a    = _ml_to_m3(data.get("ethanol_anidro_ml"))
+    eth_h    = _ml_to_m3(data.get("ethanol_hidratado_ml"))
+
+    vals = {
+        "safra": safra_norm, "qdate": qdate, "reg": "CS",
+        "cane": cane_t, "sugar": sugar_t,
+        "eth_a": eth_a, "eth_h": eth_h, "eth_t": eth_t,
+        "atr": data.get("atr_kg_t"), "smix": None, "emix": data.get("mix_ethanol_pct"),
+        "let": None, "lan": None, "lhid": None,
+        "st": None, "si": None, "se": None,
+        "src": "pdf_unica",
+    }
+
+    existing = session.execute(
+        text("SELECT id FROM unica_biweekly WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg"),
+        {"safra": safra_norm, "qdate": qdate, "reg": "CS"},
+    ).fetchone()
+
+    if existing:
+        session.execute(
+            text("""
+                UPDATE unica_biweekly SET
+                    cane_crushed_t=:cane, sugar_t=:sugar,
+                    ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h, ethanol_total_m3=:eth_t,
+                    atr_kg_ton=:atr, eth_mix_pct=:emix, source=:src
+                WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
+            """),
+            vals,
+        )
+    else:
+        session.execute(
+            text("""
+                INSERT INTO unica_biweekly (
+                    safra, quinzena_date, region,
+                    cane_crushed_t, sugar_t,
+                    ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
+                    atr_kg_ton, sugar_mix_pct, eth_mix_pct,
+                    liters_eth_ton, liters_anidro_ton, liters_hidratado_ton,
+                    eth_sales_total_m3, eth_sales_internal_m3, eth_sales_external_m3,
+                    source
+                ) VALUES (
+                    :safra, :qdate, :reg,
+                    :cane, :sugar,
+                    :eth_a, :eth_h, :eth_t,
+                    :atr, :smix, :emix,
+                    :let, :lan, :lhid,
+                    :st, :si, :se,
+                    :src
+                )
+            """),
+            vals,
+        )
+    session.commit()
+    logger.info("UNICA DB: guardado %s CS %s (source=pdf_unica)", safra_norm, qdate)
+    return True
 
 
 def get_latest_unica() -> Optional[dict]:
