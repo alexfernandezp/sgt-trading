@@ -133,6 +133,21 @@ queda traza explícita para revisión humana). 85% tolera fallos esporádicos
 
 
 
+### 3.2.D `unica_biweekly` — rangos per-quincena (neto)
+
+Tabla `unica_biweekly` almacena datos PER-QUINCENA (neto). El acumulado-a-fecha
+se reconstruye en Python via `cumsum`. Validators aplicados en `save_unica_to_db`
+(datos frescos del PDF) y en `unica_import` (Excel histórico, vía `check_or_log`).
+
+| Campo | Rango válido (neto por quincena) | Fuente | Notas |
+|-------|----------------------------------|--------|-------|
+| `cane_crushed_t` | 0 – 80,000,000 t | PDF Tabela 3 de-acumulada | Máx quincena = safra fuerte inicio May |
+| `sugar_t` | 0 – 6,000,000 t | PDF Tabela 4 de-acumulada | ~4Mt pico histórico |
+| `atr_kg_ton` | 100 – 160 kg/t | PDF Tabela 1 | Fuera de rango → dato corrupto |
+| `sugar_mix_pct` | 0 – 100 % | TB_09 Excel / Tabela 1 | Almacenado en escala 0-100 |
+
+Nota: `ethanol_*_m3` no tiene validator explícito aún; se acepta cualquier valor ≥ 0.
+
 ### 3.3 CEPEA (precios físicos Brasil)
 
 | Serie | Rango válido | Justificación |
@@ -717,3 +732,104 @@ A medida que se refactoricen los siguientes módulos en Fases 2-4, añadir secci
 | `MIN_HISTORICAL_COVERAGE` | 0.80 | `gee/ndvi_anomaly.py` |
 | `BASELINE_YEARS_WINDOW` | 5 | `gee/ndvi_anomaly.py` |
 | `HISTORY_WINDOW_MONTHS` | 24 | `gee/ndvi_anomaly.py` |
+
+### 7.6 Brazil Crop Progress Model (`services/brazil_crop_progress.py`)
+
+#### 7.6.1 Fuentes y semántica de datos
+
+- **Excel histórico** (`ingestion/unica_import.py`): 1080 filas per-quincena, 15 safras
+  2010-2025, regiones SP / OTHER / CS (Centro-Sul = SP + OTHER). Columna
+  `cane_crushed_t` = **neto por quincena** (toneladas).
+- **PDF fresco UNICA** (`ingestion/unica.py`): descargado de unicadata.com.br/listagem.php?idMn=63.
+  Tabelas 3-7 tienen la serie **acumulada** quincena-a-quincena de la safra vigente y
+  la anterior. Se **de-acumulan** a neto (`_decumulate`) antes de guardar en DB.
+  Tabela 1 = resumen acumulado (ATR, mix etanol).
+
+**Invariante crítico**: `unica_biweekly.cane_crushed_t` es SIEMPRE per-quincena (neto).
+El acumulado-a-fecha se reconstruye en Python con `cumsum`. Nunca guardar el
+acumulado directamente; hacerlo mezclaría semánticas y rompería todos los z-scores.
+
+#### 7.6.2 Índice canónico de quincena de safra
+
+La safra Centro-Sul comienza ~16/abril y tiene 24 quincenas hasta ~01/abril del año
+siguiente. Función `season_fortnight_seq(d)` en `ingestion/unica.py` mapea
+`(month, day ∈ {1, 16}) → seq 1..24`.
+
+```
+seq  1 = 16/abr   seq  7 = 16/jul   seq 13 = 16/oct   seq 19 = 16/ene
+seq  2 = 01/may   seq  8 = 01/ago   seq 14 = 01/nov   seq 20 = 01/feb
+...
+seq 24 = 01/abr (año siguiente)
+```
+
+El `seq` es la clave de alineación cross-año: compara seq=k de 2026/27 contra
+seq=k de cada año baseline (same-point-in-season, no same-calendar-date).
+
+#### 7.6.3 Baseline y robust_stats
+
+- Baseline = safras 2010-2024 con datos en el mismo seq k.
+- Se usa `robust_stats(hist, current)` de `services/stats_utils.py` (MAD-based,
+  exige n≥10, devuelve `conviction="INSUFFICIENT_DATA"` si no alcanza).
+- **No se usa z-score casero** — el modelo anterior tenía z-score lineal que falla
+  con outliers (safra récord 2023/24 infla la media y comprime señales normales).
+
+#### 7.6.4 Proyección full-year analógica
+
+Para caña, azúcar y etanol total:
+1. Para cada safra baseline: `ratio = full_year_cum / cum[seq_k]`
+2. `proyección = cum_actual[k] × mediana(ratios)`
+3. Banda = p25–p75 de los ratios
+4. Fallback a `_SEASON_PROGRESS_PCT` si baseline < 5 safras
+
+Interpretación: la mediana de los ratios históricos dice "normalmente, a este punto
+de la safra se ha completado X% del total". La pace_ratio ajusta por si la safra
+actual va más rápida/lenta que el histórico.
+
+#### 7.6.5 Descomposición YoY del azúcar
+
+Para responder "caña +75% YoY, ¿cuánto llega a azúcar?":
+
+```
+Sugar ≈ Cane × ATR × (mix_pct/100) × stoich_constant
+ΔSugar_YoY ≈ efecto_volumen(ΔCane) + efecto_ATR + efecto_mix
+```
+
+Cálculo via atribución marginal lineal (primer orden). Los efectos suman al ΔSugar
+total y se expresan como % de la variación total. Permite identificar si el cambio
+en producción de azúcar viene principalmente de más caña, mejor rendimiento (ATR),
+o cambio de destino (más/menos porción a azúcar vs etanol).
+
+#### 7.6.6 Predicción próxima quincena
+
+```
+net_pred[seq k+1] = mediana_baseline(net[k+1]) × pace_ratio
+pace_ratio = cum_actual[k] / mediana_baseline(cum[k])
+```
+
+Banda = p25–p75 de `net[k+1]` del baseline, escalados por `pace_ratio`.
+
+#### 7.6.7 Bias direccional ICE No.11
+
+Score normalizado −1..+1 (no conectado a `score_today` aún):
+- **Bearish** (> 0.15): más azúcar acumulada / proyección al alza / mix hacia azúcar
+- **Bullish** (< −0.15): ritmo atrás / mix hacia etanol / ATR bajo
+- Inputs: modified_z de señales B (40% peso), A (20%), C (20%), D (10%), proyección F (15%)
+- Solo output informativo hasta que sea validado con Shadow Test
+
+#### 7.6.8 Flujo operativo
+
+```
+py scripts/run_crop_progress.py
+  → scrape_latest_idm() → download_pdf()
+  → parse_unica_pdf()         # extrae Tabela 1 (ATR, mix, acumulado resumen)
+  → save_unica_to_db()        # parsea Tabelas 3-7, de-acumula, upsert per-quincena
+  → compute_crop_progress()   # cumsum, robust_stats, señales A-H
+  → format_crop_progress_report()
+```
+
+Archivos clave:
+- `ingestion/unica.py` — parser PDF, `_SEASON_FORTNIGHTS`, `_decumulate`, `save_unica_to_db`
+- `ingestion/unica_import.py` — backfill Excel histórico, `_to_pct` (mix %)
+- `services/brazil_crop_progress.py` — modelo ALL-IN, señales A-H
+- `scripts/run_crop_progress.py` — runner manual
+- `scripts/smoke_crop_progress.py` — smoke test (cumsum monotónico, de-acumulación, etc.)
