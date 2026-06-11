@@ -96,10 +96,16 @@ def check_unica_event() -> dict:
     if current_idm is None:
         return _apply_watchmode(result, state)
 
-    stored_idm = state.get("last_idm")
+    stored_idm  = state.get("last_idm")
+    stored_pos  = state.get("last_position_date")  # "YYYY-MM-DD" o None
 
     # ── NUEVO REPORTE ─────────────────────────────────────────────────────────
-    if stored_idm is None or current_idm > int(stored_idm):
+    # Dos señales independientes para no perderse un reporte:
+    #   1. idM distinto al guardado (robusto incluso si idMs no son estrictamente crecientes)
+    #   2. idM no disponible (fallo HTML) → siempre descargamos y verificamos por position_date
+    idm_changed = (stored_idm is None) or (current_idm != int(stored_idm))
+
+    if idm_changed:
         try:
             pdf  = download_pdf(current_idm)
             data = parse_unica_pdf(pdf) if pdf else None
@@ -108,6 +114,24 @@ def check_unica_event() -> dict:
         except Exception as exc:
             logger.warning("unica_event: error parseando reporte: %s", exc)
             data = None
+
+        # Verificar que la position_date es realmente nueva antes de tratar como NEW.
+        # Protege contra casos donde el idM cambia pero apunta al mismo periodo
+        # (p.ej. UNICA sube una correccion del mismo informe con nuevo idM).
+        if data and stored_pos:
+            try:
+                new_pos = data.get("position_date")
+                if new_pos and str(new_pos) == stored_pos:
+                    logger.info(
+                        "unica_event: idM cambio (%s→%s) pero position_date igual (%s) — ignorando",
+                        stored_idm, current_idm, stored_pos,
+                    )
+                    # Actualizar solo el idM guardado para evitar re-chequeo innecesario
+                    state["last_idm"] = current_idm
+                    _save_state(state)
+                    data = None  # no procesar como NEW
+            except Exception:
+                pass
 
         if data:
             new_state = {
