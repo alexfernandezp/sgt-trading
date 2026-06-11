@@ -26,7 +26,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _BASELINE_SAFRAS_MIN = 2010
-_BASELINE_SAFRAS_MAX = 2024   # última safra completa en Excel
+_BASELINE_SAFRAS_MAX = 2025   # última safra completa en Excel (v2 incluye 2025-2026)
 
 
 def _get_unica_biweekly(session, region: str = "CS") -> list[dict]:
