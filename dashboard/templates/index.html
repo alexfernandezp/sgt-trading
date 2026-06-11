@@ -107,14 +107,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
 /* ── Tables ── */
 .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.data-table th { padding: 5px 10px; text-align: left; color: var(--dim); font-weight: 500;
+.data-table th { padding: 5px 10px; text-align: right; color: var(--dim); font-weight: 500;
                  font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
                  border-bottom: 1px solid var(--border2); white-space: nowrap;
                  font-family: var(--mono); }
+.data-table th.th-left { text-align: left; }
 .data-table td { padding: 5px 10px; border-bottom: 1px solid rgba(26,45,63,.5);
-                 font-family: var(--mono); white-space: nowrap; font-size: 12.5px; }
+                 font-family: var(--mono); white-space: nowrap; font-size: 12.5px;
+                 text-align: right; }
+.data-table td.td-left { text-align: left; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: var(--card2); }
+/* Comparison table: fixed layout so colgroup widths are respected */
+#br-cmp-table { table-layout: fixed; width: 100%; }
+#br-cmp-table td.col-sep, #br-cmp-table th.col-sep {
+  width: 4px; padding: 0; background: var(--border2); }
+/* Override for general text-right/left helpers (needed for non-table usage) */
+.text-right { text-align: right !important; }
+.text-left  { text-align: left  !important; }
 .tag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 10px;
        font-weight: 600; font-family: var(--mono); letter-spacing: .5px; }
 .tag-long  { background: var(--bull-bg); color: var(--bull); }
@@ -415,27 +425,42 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
       <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">Cane &amp; Sugar in Mt · Mix in % · ATR in kg/t</div>
     </div>
     <div style="overflow-x:auto">
-      <table class="data-table w-full" style="font-size:12px">
+      <table class="data-table" id="br-cmp-table" style="font-size:12px;min-width:820px">
+        <colgroup>
+          <col style="width:32px"><!-- Q -->
+          <col style="width:62px"><!-- prev Date -->
+          <col style="width:56px"><!-- prev Cane -->
+          <col style="width:56px"><!-- prev Sugar -->
+          <col style="width:46px"><!-- prev Mix% -->
+          <col style="width:50px"><!-- prev ATR -->
+          <col style="width:4px"> <!-- separator -->
+          <col style="width:62px"><!-- cur Date -->
+          <col style="width:56px"><!-- cur Cane -->
+          <col style="width:56px"><!-- cur Sugar -->
+          <col style="width:46px"><!-- cur Mix% -->
+          <col style="width:50px"><!-- cur ATR -->
+          <col style="width:60px"><!-- ΔSugar -->
+          <col style="width:52px"><!-- ΔMix -->
+          <col style="width:52px"><!-- ΔATR -->
+        </colgroup>
         <thead>
-          <tr id="br-cmp-thead-season" style="border-bottom:none">
-            <!-- season labels injected by JS -->
-          </tr>
+          <tr id="br-cmp-thead-season"><!-- season labels injected by JS --></tr>
           <tr>
-            <th style="width:30px">Q</th>
-            <th class="text-right" style="color:var(--dim);font-size:10px">Date</th>
-            <th class="text-right" style="color:var(--dim);font-size:10px">Cane</th>
-            <th class="text-right" style="color:var(--dim);font-size:10px">Sugar</th>
-            <th class="text-right" style="color:var(--dim);font-size:10px">Mix%</th>
-            <th class="text-right" style="color:var(--dim);font-size:10px">ATR</th>
-            <th style="width:4px;padding:0"></th>
-            <th class="text-right" style="color:var(--neut);font-size:10px">Date</th>
-            <th class="text-right" style="color:var(--neut);font-size:10px">Cane</th>
-            <th class="text-right" style="color:var(--neut);font-size:10px">Sugar</th>
-            <th class="text-right" style="color:var(--neut);font-size:10px">Mix%</th>
-            <th class="text-right" style="color:var(--neut);font-size:10px">ATR</th>
-            <th class="text-right" style="font-size:10px">ΔSugar</th>
-            <th class="text-right" style="font-size:10px">ΔMix</th>
-            <th class="text-right" style="font-size:10px">ΔATR</th>
+            <th class="th-left">Q</th>
+            <th class="th-left" style="color:var(--dim)">Date</th>
+            <th style="color:var(--dim)">Cane</th>
+            <th style="color:var(--dim)">Sugar</th>
+            <th style="color:var(--dim)">Mix%</th>
+            <th style="color:var(--dim)">ATR</th>
+            <th class="col-sep"></th>
+            <th class="th-left" style="color:var(--neut)">Date</th>
+            <th style="color:var(--neut)">Cane</th>
+            <th style="color:var(--neut)">Sugar</th>
+            <th style="color:var(--neut)">Mix%</th>
+            <th style="color:var(--neut)">ATR</th>
+            <th>ΔSugar</th>
+            <th>ΔMix</th>
+            <th>ΔATR</th>
           </tr>
         </thead>
         <tbody id="br-cmp-tbody"></tbody>
@@ -999,17 +1024,16 @@ async function loadBrazil() {
   // ── Comparison table Q1-Q24 ───────────────────────────────────────────────
   document.getElementById('br-cmp-title').textContent =
     `Biweekly Comparison — ${prev}  vs  ${cur}`;
-  // Season header row
-  document.getElementById('br-cmp-thead-season').innerHTML = `
-    <th style="width:30px;border:none"></th>
-    <th colspan="5" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim);
-        border-bottom:2px solid var(--border2);padding-bottom:5px;letter-spacing:1px">${prev}</th>
-    <th style="width:4px;border:none;padding:0"></th>
-    <th colspan="5" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--neut);
-        border-bottom:2px solid var(--neut);padding-bottom:5px;letter-spacing:1px">${cur}</th>
-    <th colspan="3" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text);
-        border-bottom:2px solid var(--border2);padding-bottom:5px;letter-spacing:1px">Change</th>
-  `;
+  // Season header row — colspans must match colgroup exactly: 1+5+1+5+3 = 15
+  document.getElementById('br-cmp-thead-season').innerHTML =
+    `<th class="th-left" style="border-bottom:none"></th>` +
+    `<th colspan="5" style="text-align:center;color:var(--dim);` +
+      `border-bottom:2px solid var(--border2);padding-bottom:4px;letter-spacing:1px">${prev}</th>` +
+    `<th class="col-sep" style="border:none"></th>` +
+    `<th colspan="5" style="text-align:center;color:var(--neut);` +
+      `border-bottom:2px solid var(--neut);padding-bottom:4px;letter-spacing:1px">${cur}</th>` +
+    `<th colspan="3" style="text-align:center;` +
+      `border-bottom:2px solid var(--border2);padding-bottom:4px;letter-spacing:1px">Change</th>`;
 
   const cmpRows = d.comparison_rows || [];
   const deltaCell = (v, type) => {
@@ -1023,21 +1047,21 @@ async function loadBrazil() {
     const hasCur = r.has_cur;
     const rowBg  = hasCur ? 'background:rgba(245,158,11,0.04)' : '';
     const fd = (s) => s ? String(s).substring(5,10) : '—';  // "MM-DD"
-    const prevSt = 'color:var(--dim)';
-    const curSt  = hasCur ? 'color:var(--text);font-weight:600' : 'color:var(--muted)';
+    const pC = 'color:var(--dim)';                              // prev col color
+    const cC = hasCur ? 'color:var(--text);font-weight:600' : 'color:var(--muted)';  // cur col color
     return `<tr style="${rowBg}">
-      <td class="text-mono" style="color:var(--dim);font-size:11px">Q${r.q}</td>
-      <td class="text-right text-mono" style="${prevSt};font-size:11px">${fd(r.prev_date)}</td>
-      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_cane,3)}</td>
-      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_sugar,3)}</td>
-      <td class="text-right text-mono" style="${prevSt}">${r.prev_mix!=null?r.prev_mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_atr,1)}</td>
-      <td style="background:var(--border);width:1px;padding:0"></td>
-      <td class="text-right text-mono" style="${curSt};font-size:11px">${fd(r.cur_date)}</td>
-      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_cane,3)}</td>
-      <td class="text-right text-mono" style="${curSt}">${_n(r.cur_sugar,3)}</td>
-      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${r.cur_mix!=null?r.cur_mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_atr,1)}</td>
+      <td class="td-left" style="color:var(--dim)">Q${r.q}</td>
+      <td class="td-left"  style="${pC}">${fd(r.prev_date)}</td>
+      <td style="${pC}">${_n(r.prev_cane,3)}</td>
+      <td style="${pC}">${_n(r.prev_sugar,3)}</td>
+      <td style="${pC}">${r.prev_mix!=null?r.prev_mix.toFixed(1)+'%':'—'}</td>
+      <td style="${pC}">${_n(r.prev_atr,1)}</td>
+      <td class="col-sep"></td>
+      <td class="td-left"  style="${cC}">${fd(r.cur_date)}</td>
+      <td style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_cane,3)}</td>
+      <td style="${cC}">${_n(r.cur_sugar,3)}</td>
+      <td style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${r.cur_mix!=null?r.cur_mix.toFixed(1)+'%':'—'}</td>
+      <td style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_atr,1)}</td>
       ${deltaCell(r.d_sugar,'sugar')}${deltaCell(r.d_mix,'mix')}${deltaCell(r.d_atr,'atr')}
     </tr>`;
   }).join('');
