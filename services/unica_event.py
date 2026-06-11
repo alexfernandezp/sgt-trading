@@ -103,6 +103,8 @@ def check_unica_event() -> dict:
         try:
             pdf  = download_pdf(current_idm)
             data = parse_unica_pdf(pdf) if pdf else None
+            if data and pdf:
+                data["_pdf_bytes"] = pdf  # necesario para save_unica_to_db (Tabelas 3-7)
         except Exception as exc:
             logger.warning("unica_event: error parseando reporte: %s", exc)
             data = None
@@ -124,6 +126,19 @@ def check_unica_event() -> dict:
                 "last_ref_month":         data.get("ref_month"),
             }
             _save_state(new_state)
+
+            # Persistir en DB automaticamente al detectar nuevo reporte
+            try:
+                from database import SessionLocal
+                from ingestion.unica import save_unica_to_db
+                with SessionLocal() as session:
+                    saved = save_unica_to_db(session, data)
+                    if saved:
+                        logger.info("unica_event: DB actualizada para idM=%d", current_idm)
+                    else:
+                        logger.warning("unica_event: save_unica_to_db retorno False (idM=%d)", current_idm)
+            except Exception as exc:
+                logger.error("unica_event: error persistiendo en DB: %s", exc)
 
             yoy  = data.get("yoy_sugar_pct") or 0
             # Usar mix quinzenal (Tabla 2) si disponible; fallback a acumulado (Tabla 1)
