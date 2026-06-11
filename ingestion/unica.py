@@ -392,9 +392,9 @@ def save_unica_to_db(session, data: dict) -> bool:
         # raw values from Tabelas 3-4 are already in toneladas
         return int(round(v_t)) if v_t is not None else None
 
-    def _to_m3(v_ml):
-        # raw values from Tabelas 5-7 are in millones de litros (ML); 1 ML = 1000 m³
-        return int(round(v_ml * 1000)) if v_ml is not None else None
+    def _to_m3(v):
+        # raw values from Tabelas 5-7 are in m³ directly (header: "m³")
+        return int(round(v)) if v is not None else None
 
     saved = 0
     for seq in all_seqs:

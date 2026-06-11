@@ -76,9 +76,12 @@ def run():
         # 2. Calcular señales crop progress
         logger.info("[2] Calculando señales Brazil Crop Progress...")
         try:
+            from services.brazil_crop_progress import format_unica_forecast_table
             signals = compute_crop_progress(session, region="CS")
             report = format_crop_progress_report(signals)
             logger.info("\n%s", report)
+            forecast_table = format_unica_forecast_table(signals)
+            logger.info("%s", forecast_table)
 
             if not signals.get("error"):
                 sig_a = signals.get("A_cane_pace") or {}

@@ -1666,6 +1666,24 @@ def run():
     print("  VWAP bias  : %s" % vwap_bias)
     if vwap_bias != "NEUTRAL" and vwap_bias != direction and direction != "NEUTRAL":
         print("  [!] VWAP bias contradice la direccion - revisar")
+    # Bias H — UNICA crop progress (informativo, no scoring)
+    try:
+        from services.brazil_crop_progress import compute_crop_progress as _ccp
+        _cp_bias = _ccp(session, region="CS")
+        _hbias = _cp_bias.get("H_bias_ice11")
+        if _hbias is not None:
+            _hdir = "BEARISH" if _hbias < -0.15 else ("BULLISH" if _hbias > 0.15 else "NEUTRAL")
+            _hseq = _cp_bias.get("latest_seq", "?")
+            _hsafra = _cp_bias.get("latest_safra", "?")
+            print("  UNICA bias : %+.3f [%s]  safra=%s seq=%d  (informativo)" % (
+                _hbias, _hdir, _hsafra, _hseq))
+            if _hdir != "NEUTRAL" and direction != "NEUTRAL":
+                _bias_long  = _hbias > 0.15   # BULLISH = menos oferta = sube precio = LONG
+                _trade_long = direction == "LONG"
+                if _bias_long != _trade_long:
+                    print("  [!] UNICA bias contradice direccion — oferta vs tecnico")
+    except Exception as _e:
+        logger.debug("H_bias_ice11 en decision: %s", _e)
     if macro:
         mb    = macro.get("macro_bias", "NEUTRAL")
         ms_   = macro.get("macro_score", 0)
@@ -1847,6 +1865,22 @@ def run():
         print_brazil_signal(brazil)
     except Exception as e:
         logger.debug("brazil_signal error: %s", e)
+
+    # Brazil Crop Progress — señales UNICA quincenal + tabla proyección
+    try:
+        from services.brazil_crop_progress import (
+            compute_crop_progress, format_crop_progress_report, format_unica_forecast_table
+        )
+        _cp = compute_crop_progress(session, region="CS")
+        print()
+        print("  -- BRAZIL CROP PROGRESS (UNICA quincenal) --")
+        _cp_report = format_crop_progress_report(_cp)
+        for _line in _cp_report.split("\n"):
+            print("  " + _line if not _line.startswith("=") else _line)
+        _fc_table = format_unica_forecast_table(_cp)
+        print(_fc_table)
+    except Exception as _e:
+        logger.debug("brazil_crop_progress error: %s", _e)
 
     # Flujo exportador Santos (acumulado diario → semanal → mensual)
     try:

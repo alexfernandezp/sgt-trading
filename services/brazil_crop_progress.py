@@ -409,6 +409,109 @@ def compute_crop_progress(session, region: str = "CS") -> dict:
                     "next_seq": next_seq,
                 }
 
+        # ATR, mix medians at next_seq (sin ajuste pace — son estadísticos puntuales)
+        hist_atr_next  = _baseline_net(rows, next_seq, "atr_kg_ton")
+        hist_smix_next = _baseline_net(rows, next_seq, "sugar_mix_pct")
+        hist_emix_next = _baseline_net(rows, next_seq, "eth_mix_pct")
+        pred_next["atr_kg_ton"]    = round(_median(hist_atr_next),  1) if hist_atr_next  else None
+        pred_next["sugar_mix_pct"] = round(_median(hist_smix_next), 1) if hist_smix_next else None
+        pred_next["eth_mix_pct"]   = round(_median(hist_emix_next), 1) if hist_emix_next else None
+
+        # Acumulado proyectado = actual + net predicho
+        cane_pred_mt  = (pred_next.get("cane")  or {}).get("point_mt")
+        sugar_pred_mt = (pred_next.get("sugar") or {}).get("point_mt")
+        cum_cane_mt_now  = cum_cane_cur  / 1e6 if cum_cane_cur  else None
+        cum_sugar_mt_now = cum_sugar_cur / 1e6 if cum_sugar_cur else None
+        pred_next["cum_cane_mt"]  = round(cum_cane_mt_now  + cane_pred_mt,  3) if (cum_cane_mt_now  and cane_pred_mt)  else None
+        pred_next["cum_sugar_mt"] = round(cum_sugar_mt_now + sugar_pred_mt, 3) if (cum_sugar_mt_now and sugar_pred_mt) else None
+
+        # Comparativo campaña pasada al mismo next_seq
+        try:
+            ps_cum_cane  = cum_cane_map.get((prev_safra, next_seq))
+            ps_cum_sugar = cum_sugar_map.get((prev_safra, next_seq))
+            ps_atr  = next((r["atr_kg_ton"] for r in rows
+                            if r["safra"] == prev_safra
+                            and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                            and r.get("atr_kg_ton") is not None), None)
+            ps_smix = next((r["sugar_mix_pct"] for r in rows
+                            if r["safra"] == prev_safra
+                            and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                            and r.get("sugar_mix_pct") is not None), None)
+            ps_emix = next((r["eth_mix_pct"] for r in rows
+                            if r["safra"] == prev_safra
+                            and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                            and r.get("eth_mix_pct") is not None), None)
+            ps_net_cane  = next((r["cane_crushed_t"] for r in rows
+                                  if r["safra"] == prev_safra
+                                  and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                                  and r.get("cane_crushed_t") is not None), None)
+            ps_net_sugar = next((r["sugar_t"] for r in rows
+                                  if r["safra"] == prev_safra
+                                  and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                                  and r.get("sugar_t") is not None), None)
+            pred_next["prev_safra"] = {
+                "safra":          prev_safra,
+                "net_cane_mt":    round(ps_net_cane  / 1e6, 3) if ps_net_cane  else None,
+                "net_sugar_mt":   round(ps_net_sugar / 1e6, 3) if ps_net_sugar else None,
+                "cum_cane_mt":    round(ps_cum_cane  / 1e6, 3) if ps_cum_cane  else None,
+                "cum_sugar_mt":   round(ps_cum_sugar / 1e6, 3) if ps_cum_sugar else None,
+                "atr_kg_ton":     round(ps_atr,  1) if ps_atr  else None,
+                "sugar_mix_pct":  round(ps_smix, 1) if ps_smix else None,
+                "eth_mix_pct":    round(ps_emix, 1) if ps_emix else None,
+            }
+        except Exception as _e:
+            logger.debug("pred_next prev_safra: %s", _e)
+            pred_next["prev_safra"] = {}
+
+        # Promedio últimas 5 safras al mismo next_seq
+        try:
+            _last5_years = sorted(
+                {int(s.split("-")[0]) for s, _ in cum_cane_map
+                 if _BASELINE_SAFRAS_MIN <= int(s.split("-")[0]) <= _BASELINE_SAFRAS_MAX},
+                reverse=True
+            )[:5]
+            _l5_safras = ["%d-%d" % (y, y + 1) for y in _last5_years]
+
+            def _avg5(vals_list):
+                v = [x for x in vals_list if x is not None]
+                return round(sum(v) / len(v), 3) if v else None
+
+            l5_net_cane  = [r["cane_crushed_t"] for r in rows
+                             if r["safra"] in _l5_safras
+                             and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                             and r.get("cane_crushed_t") is not None]
+            l5_net_sugar = [r["sugar_t"] for r in rows
+                             if r["safra"] in _l5_safras
+                             and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                             and r.get("sugar_t") is not None]
+            l5_cum_cane  = [cum_cane_map.get((s, next_seq)) for s in _l5_safras]
+            l5_cum_sugar = [cum_sugar_map.get((s, next_seq)) for s in _l5_safras]
+            l5_atr  = [r["atr_kg_ton"] for r in rows
+                       if r["safra"] in _l5_safras
+                       and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                       and r.get("atr_kg_ton") is not None]
+            l5_smix = [r["sugar_mix_pct"] for r in rows
+                       if r["safra"] in _l5_safras
+                       and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                       and r.get("sugar_mix_pct") is not None]
+            l5_emix = [r["eth_mix_pct"] for r in rows
+                       if r["safra"] in _l5_safras
+                       and season_fortnight_seq(r["quinzena_date"]) == next_seq
+                       and r.get("eth_mix_pct") is not None]
+            pred_next["hist_5yr"] = {
+                "safras":         _l5_safras,
+                "net_cane_mt":    _avg5([v / 1e6 if v else None for v in l5_net_cane]),
+                "net_sugar_mt":   _avg5([v / 1e6 if v else None for v in l5_net_sugar]),
+                "cum_cane_mt":    _avg5([v / 1e6 if v else None for v in l5_cum_cane]),
+                "cum_sugar_mt":   _avg5([v / 1e6 if v else None for v in l5_cum_sugar]),
+                "atr_kg_ton":     _avg5(l5_atr)  if l5_atr  else None,
+                "sugar_mix_pct":  _avg5(l5_smix) if l5_smix else None,
+                "eth_mix_pct":    _avg5(l5_emix) if l5_emix else None,
+            }
+        except Exception as _e:
+            logger.debug("pred_next hist_5yr: %s", _e)
+            pred_next["hist_5yr"] = {}
+
     # ── Señal H: Bias direccional ICE No.11 ───────────────────────────────────
     # Score normalizado −1..+1; bearish (más oferta) = positivo = presión bajista precio
     # Más azúcar/proyección al alza/mix a azúcar → bearish; ritmo atrás → bullish
@@ -608,3 +711,175 @@ def format_crop_progress_report(signals: dict) -> str:
 
     lines.append("=" * 60)
     return "\n".join(str(l) for l in lines)
+
+
+def format_unica_forecast_table(signals: dict) -> str:
+    """
+    Tabla estilo UNICA para la proxima quincena proyectada.
+
+    Filas: Proyeccion (punto + banda) | Campana pasada | Media 5 anos
+    Secciones: Netos quincena | Acumulados
+    """
+    if signals.get("error"):
+        return "UNICA Forecast: sin datos"
+
+    pred = signals.get("G_pred_next") or {}
+    if not pred:
+        return "UNICA Forecast: sin prediccion disponible (baseline insuficiente)"
+
+    cane_p  = pred.get("cane")  or {}
+    sugar_p = pred.get("sugar") or {}
+    next_seq = cane_p.get("next_seq") or sugar_p.get("next_seq")
+    if next_seq is None:
+        return "UNICA Forecast: seq final de safra (seq=24), sin siguiente quincena"
+
+    # next_seq → fecha aproximada
+    from ingestion.unica import _SEASON_FORTNIGHTS
+    _latest_date = signals.get("latest_quinzena_date", "?")
+    try:
+        _latest_yr = int(_latest_date[:4])
+    except Exception:
+        _latest_yr = 2026
+    if next_seq <= len(_SEASON_FORTNIGHTS):
+        _mn, _dn = _SEASON_FORTNIGHTS[next_seq - 1]
+        _yr = _latest_yr if _mn >= 4 else _latest_yr + 1
+        _next_date_str = "%02d/%02d/%d" % (_dn, _mn, _yr)
+    else:
+        _next_date_str = "?"
+
+    prev = pred.get("prev_safra") or {}
+    h5   = pred.get("hist_5yr")   or {}
+
+    def _mt(v):
+        return "%.2f" % v if v is not None else "N/D"
+
+    def _f1(v, suffix=""):
+        return "%.1f%s" % (v, suffix) if v is not None else "N/D"
+
+    def _pct(proj_v, ref_v):
+        if proj_v is None or ref_v is None or ref_v == 0:
+            return None
+        return "%+.1f%%" % ((proj_v / ref_v - 1) * 100)
+
+    def _pct_str(proj_v, ref_v, label):
+        p = _pct(proj_v, ref_v)
+        return "  %s=%s" % (label, p) if p is not None else ""
+
+    proj_cane  = cane_p.get("point_mt")
+    proj_cane_lo = cane_p.get("low_mt")
+    proj_cane_hi = cane_p.get("high_mt")
+    proj_sugar = sugar_p.get("point_mt")
+    proj_sugar_lo = sugar_p.get("low_mt")
+    proj_sugar_hi = sugar_p.get("high_mt")
+    proj_atr   = pred.get("atr_kg_ton")
+    proj_smix  = pred.get("sugar_mix_pct")
+    proj_emix  = pred.get("eth_mix_pct")
+    proj_cum_cane  = pred.get("cum_cane_mt")
+    proj_cum_sugar = pred.get("cum_sugar_mt")
+
+    ps_cane  = prev.get("net_cane_mt")
+    ps_sugar = prev.get("net_sugar_mt")
+    ps_atr   = prev.get("atr_kg_ton")
+    ps_smix  = prev.get("sugar_mix_pct")
+    ps_emix  = prev.get("eth_mix_pct")
+    ps_cum_cane  = prev.get("cum_cane_mt")
+    ps_cum_sugar = prev.get("cum_sugar_mt")
+    ps_safra     = prev.get("safra", "N/D")
+
+    h5_cane  = h5.get("net_cane_mt")
+    h5_sugar = h5.get("net_sugar_mt")
+    h5_atr   = h5.get("atr_kg_ton")
+    h5_smix  = h5.get("sugar_mix_pct")
+    h5_emix  = h5.get("eth_mix_pct")
+    h5_cum_cane  = h5.get("cum_cane_mt")
+    h5_cum_sugar = h5.get("cum_sugar_mt")
+    h5_yrs       = h5.get("safras", [])
+    h5_tag       = "(%s-%s)" % (h5_yrs[-1][:4], h5_yrs[0][:4]) if h5_yrs else ""
+
+    W = 74
+    sep = "  " + "-" * (W - 2)
+
+    lines = [
+        "",
+        "=" * W,
+        "  PROYECCION PROXIMA QUINCENA UNICA  seq=%d  (%s)" % (next_seq, _next_date_str),
+        "  Safra vigente: %s  |  baseline %d anos  |  pace-ajustado" % (
+            signals.get("latest_safra", "?"), signals.get("baseline_years", 0)),
+        "=" * W,
+        "",
+        "  NETOS QUINCENA:",
+        "  %-18s  %-8s  %-8s  %-11s  %-9s  %-9s" % (
+            "", "CANA Mt", "AZU Mt", "ATR kg/t", "MIX AZU%", "MIX ETH%"),
+        sep,
+    ]
+
+    lines.append("  %-18s  %-8s  %-8s  %-11s  %-9s  %-9s" % (
+        "Proyeccion",
+        _mt(proj_cane).strip(),
+        _mt(proj_sugar).strip(),
+        _f1(proj_atr).strip(),
+        _f1(proj_smix, "%").strip(),
+        _f1(proj_emix, "%").strip(),
+    ))
+    # Banda p25-p75 en segunda fila
+    if proj_cane_lo and proj_cane_hi and proj_sugar_lo and proj_sugar_hi:
+        lines.append("  %-18s  [%-6.2f-%-5.2f]  [%-5.2f-%-4.2f]  (banda p25-p75)" % (
+            "", proj_cane_lo, proj_cane_hi, proj_sugar_lo, proj_sugar_hi))
+
+    lines.append("  %-18s  %-8s  %-8s  %-11s  %-9s  %-9s%s%s" % (
+        "Campana " + ps_safra,
+        _mt(ps_cane), _mt(ps_sugar),
+        _f1(ps_atr) if ps_atr else "N/D",
+        _f1(ps_smix, "%") if ps_smix else "N/D",
+        _f1(ps_emix, "%") if ps_emix else "N/D",
+        _pct_str(proj_cane, ps_cane, "cana"),
+        _pct_str(proj_sugar, ps_sugar, "azu"),
+    ))
+    lines.append("  %-18s  %-8s  %-8s  %-11s  %-9s  %-9s%s%s" % (
+        "Media 5yr " + h5_tag,
+        _mt(h5_cane), _mt(h5_sugar),
+        _f1(h5_atr) if h5_atr else "N/D",
+        _f1(h5_smix, "%") if h5_smix else "N/D",
+        _f1(h5_emix, "%") if h5_emix else "N/D",
+        _pct_str(proj_cane, h5_cane, "cana"),
+        _pct_str(proj_sugar, h5_sugar, "azu"),
+    ))
+
+    lines += [
+        "",
+        "  ACUMULADO A FIN DE seq=%d (actual + proyeccion neto):" % next_seq,
+        "  %-18s  %-12s  %-12s" % ("", "CANA ACUM Mt", "AZU ACUM Mt"),
+        sep,
+    ]
+    lines.append("  %-18s  %-12s  %-12s" % (
+        "Proyeccion",
+        _mt(proj_cum_cane),
+        _mt(proj_cum_sugar),
+    ))
+    lines.append("  %-18s  %-12s  %-12s%s%s" % (
+        "Campana " + ps_safra,
+        _mt(ps_cum_cane),
+        _mt(ps_cum_sugar),
+        _pct_str(proj_cum_cane, ps_cum_cane, "cana"),
+        _pct_str(proj_cum_sugar, ps_cum_sugar, "azu"),
+    ))
+    lines.append("  %-18s  %-12s  %-12s%s%s" % (
+        "Media 5yr " + h5_tag,
+        _mt(h5_cum_cane),
+        _mt(h5_cum_sugar),
+        _pct_str(proj_cum_cane, h5_cum_cane, "cana"),
+        _pct_str(proj_cum_sugar, h5_cum_sugar, "azu"),
+    ))
+
+    bias = signals.get("H_bias_ice11")
+    if bias is not None:
+        bias_dir = "BEARISH (mas oferta)" if bias < -0.15 else \
+                   "BULLISH (menos oferta)" if bias > 0.15 else "NEUTRAL"
+        lines += [
+            sep,
+            "  Bias ICE No.11: %+.3f  -> %s  (>0=BULLISH precio alza, <0=BEARISH baja)" % (
+                bias, bias_dir),
+        ]
+
+    lines.append("=" * W)
+    return "\n".join(lines)
