@@ -1783,6 +1783,7 @@ def run():
     if final_decision != scoring.decision:
         print("  Decision dos capas: %s  (mas conservador - aplicado)" % final_decision)
 
+    setup = None  # inicializar antes del bloque condicional (shadow trade lo necesita)
     if scoring.decision != "NO_TRADE" and not scoring.veto:
         # Entry zone primero: extraer cluster entry/stop para el trade setup
         print("\n  Calculando zona de entrada...")
@@ -1834,6 +1835,88 @@ def run():
             print("\n  [!] No se pudo calcular el setup (datos insuficientes)")
     else:
         print()
+
+    # ── Shadow trade: persistir señal para forward return tracking ───────────────
+    try:
+        import json as _sj, os as _so
+        from sqlalchemy import text as _st
+        from datetime import date as _sdate
+
+        _sl1_long  = _layer_sum(scores_l, LAYER1_LONG_KEYS)
+        _sl1_short = _layer_sum(scores_r, LAYER1_SHORT_KEYS)
+        _sl2_long  = _layer_sum(l2l, LAYER2_AUTO_KEYS)
+        _sl2_short = _layer_sum(l2r, LAYER2_AUTO_KEYS)
+        _sl2_valid = _layer_valid(l2l, LAYER2_AUTO_KEYS)
+
+        _cot_pct = inputs.get("spec_net_pct3yr") or inputs.get("cot_pct")
+        _vwap_sig = (vwap_data.get("session") or {}).get("sigma_pos")
+
+        _bd_path = _so.path.join(_so.path.dirname(_so.path.dirname(_so.path.abspath(__file__))),
+                                 "logs", "fundamental_backdrop.json")
+        _fund_dir  = None
+        _fund_bias = None
+        if _so.path.exists(_bd_path):
+            _bd = _sj.load(open(_bd_path, encoding="utf-8"))
+            _fund_dir  = _bd.get("direction")
+            _fund_bias = _bd.get("bias")
+
+        _sl_price  = (setup or {}).get("stop_loss")
+        _tp1_price = (setup or {}).get("tp1")
+        _tp2_price = (setup or {}).get("tp2")
+
+        session.execute(_st("""
+            INSERT INTO shadow_trades
+                (signal_date, signal_ts, instrument, direction, decision,
+                 score_total, l1_long, l1_short, l2_long, l2_short, l2_valid, veto,
+                 entry_price, sl_price, tp1_price, tp2_price,
+                 cot_pct, vwap_sigma, fundamental_dir, fundamental_bias)
+            VALUES
+                (CURRENT_DATE, NOW(), 'SBN26', :dir, :dec,
+                 :st, :l1l, :l1r, :l2l, :l2r, :l2v, :veto,
+                 :ep, :sl, :tp1, :tp2,
+                 :cpct, :vsig, :fdir, :fbias)
+            ON CONFLICT (signal_date, instrument) DO UPDATE SET
+                direction        = EXCLUDED.direction,
+                decision         = EXCLUDED.decision,
+                score_total      = EXCLUDED.score_total,
+                l1_long          = EXCLUDED.l1_long,
+                l1_short         = EXCLUDED.l1_short,
+                l2_long          = EXCLUDED.l2_long,
+                l2_short         = EXCLUDED.l2_short,
+                l2_valid         = EXCLUDED.l2_valid,
+                veto             = EXCLUDED.veto,
+                entry_price      = EXCLUDED.entry_price,
+                sl_price         = EXCLUDED.sl_price,
+                tp1_price        = EXCLUDED.tp1_price,
+                tp2_price        = EXCLUDED.tp2_price,
+                cot_pct          = EXCLUDED.cot_pct,
+                vwap_sigma       = EXCLUDED.vwap_sigma,
+                fundamental_dir  = EXCLUDED.fundamental_dir,
+                fundamental_bias = EXCLUDED.fundamental_bias,
+                signal_ts        = NOW()
+        """), {
+            "dir":   confirmed_direction,
+            "dec":   final_decision,
+            "st":    scoring.total_score,
+            "l1l":   _sl1_long,
+            "l1r":   _sl1_short,
+            "l2l":   _sl2_long,
+            "l2r":   _sl2_short,
+            "l2v":   _sl2_valid,
+            "veto":  scoring.veto,
+            "ep":    price,
+            "sl":    _sl_price,
+            "tp1":   _tp1_price,
+            "tp2":   _tp2_price,
+            "cpct":  _cot_pct,
+            "vsig":  _vwap_sig,
+            "fdir":  _fund_dir,
+            "fbias": _fund_bias,
+        })
+        session.commit()
+        logger.debug("shadow_trade guardado: %s %s score=%d", confirmed_direction, final_decision, scoring.total_score)
+    except Exception as _se:
+        logger.warning("shadow_trade insert: %s", _se)
 
     # ── Contexto mensual (no afecta scoring diario) ───────────────────────────
     print()
