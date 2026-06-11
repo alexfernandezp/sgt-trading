@@ -113,10 +113,12 @@ def check_unica_event() -> dict:
                 "last_detected_at":       datetime.now(timezone.utc).isoformat(),
                 "last_position_date":     str(data.get("position_date", date.today())),
                 "last_yoy_sugar_pct":     data.get("yoy_sugar_pct"),
-                "last_yoy_quint_pct":     None,   # quinzenal YoY — pendiente parser T2
+                "last_yoy_quint_pct":     None,
                 "last_sugar_cumul_mt":    data.get("sugar_cumulative_mt"),
                 "last_cane_cumul_mt":     data.get("cane_cumulative_mt"),
-                "last_mix_ethanol_pct":   data.get("mix_ethanol_pct"),
+                "last_mix_ethanol_pct":   data.get("mix_ethanol_pct"),       # acumulado Tabla 1
+                "last_mix_ethanol_pct_q": data.get("mix_ethanol_pct_q"),     # quinzenal Tabla 2
+                "last_atr_kg_t_q":        data.get("atr_kg_t_q"),            # quinzenal Tabla 2
                 "last_safra":             data.get("safra"),
                 "last_quinzena":          data.get("quinzena_num"),
                 "last_ref_month":         data.get("ref_month"),
@@ -124,7 +126,9 @@ def check_unica_event() -> dict:
             _save_state(new_state)
 
             yoy  = data.get("yoy_sugar_pct") or 0
-            mix_sugar = round(100 - data["mix_ethanol_pct"], 1) if data.get("mix_ethanol_pct") else None
+            # Usar mix quinzenal (Tabla 2) si disponible; fallback a acumulado (Tabla 1)
+            emix_display = data.get("mix_ethanol_pct_q") or data.get("mix_ethanol_pct")
+            mix_sugar = round(100 - emix_display, 1) if emix_display else None
             eth_ml    = data.get("ethanol_total_ml") or 0
             cum_mt    = data.get("sugar_cumulative_mt") or 0
             q_mt      = data.get("sugar_quinzenal_mt") or 0

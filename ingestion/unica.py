@@ -222,12 +222,24 @@ def parse_unica_pdf(pdf_bytes: bytes) -> Optional[dict]:
         if m_mix:
             result["mix_ethanol_pct"] = _pt_float(m_mix.group(2))
 
-    # Quinzenal Centro-Sul (tabla 2)
+    # Quinzenal Centro-Sul (tabla 2) — datos de la quincena especifica, NO acumulados
     if t2_block:
         raw_cane_q  = _cs_value(t2_block, r"Cana-de-açúcar\s+¹")
         raw_sugar_q = _cs_value(t2_block, r"Açúcar\s+¹")
         if raw_cane_q  is not None: result["cane_quinzenal_mt"]  = round(raw_cane_q  / 1000, 4)
         if raw_sugar_q is not None: result["sugar_quinzenal_mt"] = round(raw_sugar_q / 1000, 4)
+
+        # ATR y mix quinzenal — distintos del acumulado de Tabla 1.
+        # Tabla 2 tiene la misma estructura que Tabla 1: CS_prev CS_cur Var% SP_prev SP_cur Var%...
+        # group(2) = valor actual Centro-Sul para esta quincena especifica.
+        m_atr_q = re.search(
+            r"ATR/\s*tonelada de cana\s+³\s+([\d,]+)\s+([\d,]+)", t2_block, re.IGNORECASE
+        )
+        if m_atr_q:
+            result["atr_kg_t_q"] = _pt_float(m_atr_q.group(2))
+        m_mix_q = re.search(r"etanol\s+([\d,]+)%\s+([\d,]+)%", t2_block, re.IGNORECASE)
+        if m_mix_q:
+            result["mix_ethanol_pct_q"] = _pt_float(m_mix_q.group(2))
 
     # 5. Proyeccion full-year (solo si tenemos acumulado)
     sugar_cum = result.get("sugar_cumulative_mt")
@@ -331,7 +343,15 @@ def save_unica_to_db(session, data: dict) -> bool:
 
     Parsea Tabelas 3-7 (serie acumulada), de-acumula a neto por quincena,
     y hace upsert de cada quincena presente con datos per-quincena homogéneos
-    al Excel histórico. ATR y mix vienen de Tabela 1 (ya en data).
+    al Excel histórico.
+
+    ATR y mix:
+      - Quincena actual (cur_seq): usa valores de Tabela 2 (quinzenal) — especificos
+        de esa quincena.
+      - Quincenas históricas existentes: NO sobreescribe ATR/mix (preserva valores
+        del Excel histórico o de PDFs anteriores).
+      - Quincenas históricas nuevas (insert): inserta con ATR/mix = NULL.
+    Los valores acumulados de Tabela 1 NO son por quincena y no se almacenan.
     Retorna True si se guardó al menos una fila.
     """
     from sqlalchemy import text
@@ -345,9 +365,15 @@ def save_unica_to_db(session, data: dict) -> bool:
     safra_norm = safra.replace("/", "-")
     safra_start = int(safra_norm.split("-")[0])
 
-    # ATR y mix de Tabela 1 (última fila, misma para todas las quincenas del PDF)
-    atr = data.get("atr_kg_t")
-    emix = data.get("mix_ethanol_pct")
+    # Tabela 2 (quinzenal) — ATR y mix especificos de la quincena actual
+    atr_q  = data.get("atr_kg_t_q")        # None si Tabla 2 no parseable
+    emix_q = data.get("mix_ethanol_pct_q")  # None si Tabla 2 no parseable
+
+    # Identificar seq de la quincena actual via position_date
+    pos = data.get("position_date")
+    cur_seq = _SEQ.get((pos.month, pos.day)) if pos else None
+    if cur_seq is None:
+        logger.warning("UNICA save_unica_to_db: no se pudo determinar cur_seq (pos=%s)", pos)
 
     if not pdf_bytes:
         logger.warning("UNICA save_unica_to_db: sin _pdf_bytes, no se puede parsear Tabelas 3-7")
@@ -409,7 +435,12 @@ def save_unica_to_db(session, data: dict) -> bool:
         raw_cane  = net_cane.get(seq)
         raw_sugar = net_sugar.get(seq)
 
-        # Validar rangos (mil t → t después de conversión)
+        is_cur = (seq == cur_seq)
+        # Solo la quincena actual recibe ATR/mix del PDF (Tabla 2 = quinzenal)
+        use_atr  = atr_q  if (is_cur and atr_q  is not None) else None
+        use_emix = emix_q if (is_cur and emix_q is not None) else None
+
+        # Validar rangos
         try:
             if raw_cane is not None:
                 validate_range(raw_cane, min_value=0, max_value=80e6,
@@ -417,8 +448,8 @@ def save_unica_to_db(session, data: dict) -> bool:
             if raw_sugar is not None:
                 validate_range(raw_sugar, min_value=0, max_value=6e6,
                                source="unica_pdf", field="sugar_net_t", allow_none=False)
-            if atr is not None:
-                validate_range(atr, min_value=100, max_value=160,
+            if use_atr is not None:
+                validate_range(use_atr, min_value=100, max_value=160,
                                source="unica_pdf", field="atr_kg_ton", allow_none=False)
         except Exception as ve:
             parse_log_warning("unica_pdf", f"seq={seq} {qdate}", str(ve))
@@ -431,9 +462,9 @@ def save_unica_to_db(session, data: dict) -> bool:
             "eth_t": _to_m3(net_eth_t.get(seq)),
             "eth_a": _to_m3(net_eth_a.get(seq)),
             "eth_h": _to_m3(net_eth_h.get(seq)),
-            "atr":   atr,
+            "atr":   use_atr,
             "smix":  None,
-            "emix":  emix,
+            "emix":  use_emix,
             "src":   "pdf_unica",
         }
 
@@ -443,17 +474,31 @@ def save_unica_to_db(session, data: dict) -> bool:
         ).fetchone()
 
         if existing:
-            session.execute(
-                text("""
-                    UPDATE unica_biweekly SET
-                        cane_crushed_t=:cane, sugar_t=:sugar,
-                        ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h,
-                        ethanol_total_m3=:eth_t, atr_kg_ton=:atr,
-                        eth_mix_pct=:emix, source=:src
-                    WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
-                """),
-                vals,
-            )
+            if is_cur:
+                # Quincena actual: actualizar todo incluido ATR/mix (valores de Tabla 2)
+                session.execute(
+                    text("""
+                        UPDATE unica_biweekly SET
+                            cane_crushed_t=:cane, sugar_t=:sugar,
+                            ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h,
+                            ethanol_total_m3=:eth_t, atr_kg_ton=:atr,
+                            eth_mix_pct=:emix, source=:src
+                        WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
+                    """),
+                    vals,
+                )
+            else:
+                # Quincenas históricas: solo actualizar produccion, preservar ATR/mix del Excel
+                session.execute(
+                    text("""
+                        UPDATE unica_biweekly SET
+                            cane_crushed_t=:cane, sugar_t=:sugar,
+                            ethanol_anidro_m3=:eth_a, ethanol_hidratado_m3=:eth_h,
+                            ethanol_total_m3=:eth_t, source=:src
+                        WHERE safra=:safra AND quinzena_date=:qdate AND region=:reg
+                    """),
+                    vals,
+                )
         else:
             session.execute(
                 text("""
