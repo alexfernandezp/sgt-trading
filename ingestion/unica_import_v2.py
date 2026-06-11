@@ -163,6 +163,110 @@ def run_new_excel_backfill(session, excel_path: str = _EXCEL_NEW, commit: bool =
     return {"total": len(all_keys), "inserted": inserted, "skipped": skipped}
 
 
+def _csv_date(dd_mm: str, start_year: int) -> date:
+    """
+    Convierte 'DD/MM' al date correcto dentro de una safra que empieza en start_year.
+    La safra va de Apr-16 (start_year) hasta Apr-1 (start_year+1).
+      16/04 → start_year-04-16  (seq=1)
+      01/04 → (start_year+1)-04-01  (seq=24)
+      Meses 1-3 → start_year+1
+    """
+    parts = dd_mm.strip().split("/")
+    day, month = int(parts[0]), int(parts[1])
+    if month < 4 or (month == 4 and day == 1):
+        year = start_year + 1
+    else:
+        year = start_year
+    return date(year, month, day)
+
+
+def run_csv_mix_atr_backfill(
+    session,
+    safra: str = "2025-2026",
+    mix_path: str | None = None,
+    atr_path: str | None = None,
+    commit: bool = True,
+) -> dict:
+    """
+    Actualiza sugar_mix_pct, eth_mix_pct, atr_kg_ton para una safra ya importada.
+
+    CSVs esperados (columnas: Quinzena, Safra Atual):
+      MixAzucar2025-26.csv  — valores ej. '44.71%'
+      ATR2025-26.csv        — valores ej. '103.46'
+
+    eth_mix_pct = 100 - sugar_mix_pct  (resto va a etanol, como en UNICA)
+    Solo hace UPDATE, no inserta filas nuevas.
+    """
+    import csv
+    from sqlalchemy import text
+
+    start_year = int(safra.split("-")[0])
+
+    if mix_path is None:
+        mix_path = os.path.join(_ONEDRIVE, "MixAzucar2025-26.csv")
+    if atr_path is None:
+        atr_path = os.path.join(_ONEDRIVE, "ATR2025-26.csv")
+
+    # Leer mix
+    mix_map: dict[date, float] = {}
+    with open(mix_path, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            qz  = row.get("Quinzena", "").strip()
+            val = row.get("Safra Atual", "").strip().rstrip("%")
+            if not qz or not val:
+                continue
+            try:
+                mix_map[_csv_date(qz, start_year)] = float(val)
+            except Exception:
+                logger.warning("mix: fila ignorada %s=%s", qz, val)
+
+    # Leer ATR
+    atr_map: dict[date, float] = {}
+    with open(atr_path, encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            qz  = row.get("Quinzena", "").strip()
+            val = row.get("Safra Atual", "").strip()
+            if not qz or not val:
+                continue
+            try:
+                atr_map[_csv_date(qz, start_year)] = float(val)
+            except Exception:
+                logger.warning("atr: fila ignorada %s=%s", qz, val)
+
+    update_sql = text("""
+        UPDATE unica_biweekly
+        SET
+            sugar_mix_pct = :smix,
+            eth_mix_pct   = :emix,
+            atr_kg_ton    = :atr
+        WHERE safra = :safra AND quinzena_date = :qdate AND region = 'CS'
+    """)
+
+    all_dates = sorted(set(mix_map) | set(atr_map))
+    updated = 0
+    for qdate in all_dates:
+        smix = mix_map.get(qdate)
+        emix = round(100.0 - smix, 2) if smix is not None else None
+        atr  = atr_map.get(qdate)
+        try:
+            result = session.execute(update_sql, {
+                "safra": safra,
+                "qdate": qdate,
+                "smix":  round(smix, 2) if smix is not None else None,
+                "emix":  emix,
+                "atr":   round(atr,  2) if atr  is not None else None,
+            })
+            if result.rowcount:
+                updated += 1
+        except Exception as e:
+            logger.warning("update error date=%s: %s", qdate, e)
+
+    if commit:
+        session.commit()
+
+    return {"dates": len(all_dates), "rows_updated": updated}
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -176,3 +280,9 @@ if __name__ == "__main__":
     print("  Total registros  :", stats["total"])
     print("  Upserted         :", stats["inserted"])
     print("  Skipped (null)   :", stats["skipped"])
+    print()
+    with SessionLocal() as sess:
+        stats2 = run_csv_mix_atr_backfill(sess)
+    print("Backfill Mix + ATR 2025-2026:")
+    print("  Fechas procesadas:", stats2["dates"])
+    print("  Filas actualizadas:", stats2["rows_updated"])
