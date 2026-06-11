@@ -4,30 +4,32 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SGT Trading Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 /* ── Variables ── */
 :root {
-  --bg:        #000000;
-  --surface:   #070708;
-  --card:      #0d0d0f;
-  --card2:     #111115;
-  --border:    #1e1e24;
-  --border2:   #28282e;
-  --text:      #eaedf5;
-  --dim:       #7a8090;
-  --muted:     #3a3d48;
-  --bull:      #00d97e;
-  --bull-bg:   rgba(0,217,126,.10);
-  --bear:      #ff3535;
-  --bear-bg:   rgba(255,53,53,.10);
-  --neut:      #f59e0b;
-  --neut-bg:   rgba(245,158,11,.09);
-  --blue:      #4d9fff;
-  --blue-bg:   rgba(77,159,255,.10);
+  --bg:        #040c18;
+  --surface:   #071222;
+  --card:      #0b1828;
+  --card2:     #0f1e30;
+  --border:    #1a2d3f;
+  --border2:   #222d3d;
+  --text:      #e4ecf8;
+  --dim:       #5a7090;
+  --muted:     #243040;
+  --bull:      #26c6a0;
+  --bull-bg:   rgba(38,198,160,.09);
+  --bear:      #f04040;
+  --bear-bg:   rgba(240,64,64,.09);
+  --neut:      #f57c00;
+  --neut-bg:   rgba(245,124,0,.09);
+  --blue:      #4a9fff;
+  --blue-bg:   rgba(74,159,255,.09);
   --purple:    #a78bfa;
   --font:      'Segoe UI', system-ui, sans-serif;
-  --mono:      'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+  --mono:      'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); font-family: var(--font);
@@ -78,11 +80,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
 /* ── KPI Cards ── */
 .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-.kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 0;
+.kpi-card { background: var(--card); border: 1px solid var(--border2); border-radius: 3px;
             padding: 14px 16px; }
 .kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase;
              letter-spacing: .8px; margin-bottom: 6px; }
-.kpi-value { font-size: 22px; font-family: var(--mono); font-weight: 600; line-height: 1.1; }
+.kpi-value { font-size: 26px; font-family: var(--mono); font-weight: 600; line-height: 1.1; }
 .kpi-sub { font-size: 11px; color: var(--dim); margin-top: 4px; }
 .kpi-card.bull { border-left: 3px solid var(--bull);  background: linear-gradient(135deg, var(--card), var(--bull-bg)); }
 .kpi-card.bear { border-left: 3px solid var(--bear);  background: linear-gradient(135deg, var(--card), var(--bear-bg)); }
@@ -97,7 +99,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 /* ── Two-column grid ── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
 .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 0; padding: 16px; }
+.card { background: var(--card); border: 1px solid var(--border2); border-radius: 3px; padding: 16px; }
 .card-title { font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase;
               letter-spacing: 1px; margin-bottom: 12px; }
 .chart-wrap { position: relative; height: 220px; }
@@ -105,11 +107,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
 /* ── Tables ── */
 .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.data-table th { padding: 7px 10px; text-align: left; color: var(--dim); font-weight: 500;
-                 font-size: 10.5px; text-transform: uppercase; letter-spacing: .7px;
-                 border-bottom: 1px solid var(--border); white-space: nowrap; }
-.data-table td { padding: 7px 10px; border-bottom: 1px solid rgba(28,45,71,.5);
-                 font-family: var(--mono); white-space: nowrap; }
+.data-table th { padding: 5px 10px; text-align: left; color: var(--dim); font-weight: 500;
+                 font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+                 border-bottom: 1px solid var(--border2); white-space: nowrap;
+                 font-family: var(--mono); }
+.data-table td { padding: 5px 10px; border-bottom: 1px solid rgba(26,45,63,.5);
+                 font-family: var(--mono); white-space: nowrap; font-size: 12.5px; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: var(--card2); }
 .tag { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 10px;
@@ -440,24 +443,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
     </div>
   </div>
 
-  <!-- ── Historical season totals ── -->
+  <!-- ── Historical season totals (transposed: years = columns, variables = rows) ── -->
   <div class="card">
     <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px">Centro-Sul · Annual Production History</div>
-    <table class="data-table w-full" style="font-size:12px">
-      <thead>
-        <tr>
-          <th>Season</th>
-          <th class="text-right">Sugar (Mt)</th>
-          <th class="text-right">YoY</th>
-          <th class="text-right">Cane (Mt)</th>
-          <th class="text-right">Ethanol (Mm³)</th>
-          <th class="text-right">Avg Mix %</th>
-          <th class="text-right">Avg ATR</th>
-          <th style="width:80px">Status</th>
-        </tr>
-      </thead>
-      <tbody id="br-hist-tbody"></tbody>
-    </table>
+    <div style="overflow-x:auto">
+      <table class="data-table" id="br-hist-table" style="font-size:12px;min-width:900px">
+        <thead id="br-hist-thead"></thead>
+        <tbody id="br-hist-tbody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -684,28 +678,31 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <!-- ── JavaScript ── -->
 <script>
 const COLORS = {
-  bull:'#00d97e', bear:'#ff3535', neut:'#f59e0b',
-  blue:'#4d9fff', purple:'#a78bfa', dim:'#7a8090',
-  border:'#1e1e24', bg:'#0d0d0f', text:'#eaedf5',
-  amber:'#f59e0b',
+  bull:'#26c6a0', bear:'#f04040', neut:'#f57c00',
+  blue:'#4a9fff', purple:'#a78bfa', dim:'#5a7090',
+  border:'#1a2d3f', bg:'#0b1828', text:'#e4ecf8',
+  amber:'#f57c00', emerald:'#26c6a0',
 };
-const MONO_FONT = "'Cascadia Code','JetBrains Mono','Consolas',monospace";
+const MONO_FONT = "'Fira Code','JetBrains Mono','Cascadia Code','Consolas',monospace";
+const GRID_H  = 'rgba(255,255,255,0.06)';   // horizontal gridlines
+const GRID_V  = 'rgba(255,255,255,0.04)';   // vertical gridlines
 const CHART_DEFAULTS = {
   responsive:true, maintainAspectRatio:false,
   interaction:{ mode:'index', intersect:false },
   plugins:{
-    legend:{ labels:{ color:'#5a6070', font:{size:11, family:MONO_FONT}, boxWidth:14 } },
-    tooltip:{ backgroundColor:'#111', titleColor:'#eaedf5', bodyColor:'#7a8090',
-              borderColor:'#252530', borderWidth:1, padding:10,
-              titleFont:{size:12,weight:'600'}, bodyFont:{size:11} },
+    legend:{ labels:{ color:'#4a6080', font:{size:11, family:MONO_FONT}, boxWidth:12 } },
+    tooltip:{ backgroundColor:'#0a1520', titleColor:'#e4ecf8', bodyColor:'#5a7090',
+              borderColor:'#1a2d3f', borderWidth:1, padding:10,
+              titleFont:{size:12,weight:'600',family:MONO_FONT},
+              bodyFont:{size:11,family:MONO_FONT} },
   },
   scales:{
-    x:{ ticks:{ color:'#4a4f5e', font:{size:11,family:MONO_FONT}, maxTicksLimit:8 },
-        grid:{ color:'rgba(255,255,255,0.025)', drawBorder:false },
-        border:{ color:'#1e1e24' } },
-    y:{ ticks:{ color:'#4a4f5e', font:{size:11,family:MONO_FONT} },
-        grid:{ color:'rgba(255,255,255,0.025)', drawBorder:false },
-        border:{ color:'#1e1e24' } },
+    x:{ ticks:{ color:'#3a5068', font:{size:11,family:MONO_FONT}, maxTicksLimit:8 },
+        grid:{ color:GRID_V, display:true, drawBorder:false },
+        border:{ color:'#1a2d3f' } },
+    y:{ ticks:{ color:'#3a5068', font:{size:11,family:MONO_FONT} },
+        grid:{ color:GRID_H, display:true, drawBorder:false },
+        border:{ color:'#1a2d3f' } },
   },
 };
 
@@ -885,21 +882,22 @@ async function loadBrazil() {
     type:'line',
     data:{ labels:Q_LABELS, datasets:[
       { label:'_p25', data:p25, borderColor:'transparent',
-        backgroundColor:'rgba(77,159,255,0.10)', fill:'+1', pointRadius:0, tension:.35 },
-      { label:'_p75', data:p75, borderColor:'rgba(77,159,255,0.22)', borderWidth:1,
-        backgroundColor:'transparent', fill:false, pointRadius:0, tension:.35, borderDash:[3,3] },
-      { label:'10-yr avg', data:avg, borderColor:'rgba(77,159,255,0.40)', borderWidth:1.5,
-        borderDash:[6,4], pointRadius:0, tension:.35 },
-      { label:prev, data:cumPrev, borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
-        pointRadius:0, tension:.35, borderDash:[5,3] },
-      { label:cur, data:cumCur, borderColor:COLORS.bull, borderWidth:3,
-        pointRadius: cumCur.filter(v=>v!=null).length > 0 ? 4 : 0,
-        pointBackgroundColor:COLORS.bull, tension:.35 },
+        backgroundColor:'rgba(74,159,255,0.07)', fill:'+1', pointRadius:0, tension:.3 },
+      { label:'_p75', data:p75, borderColor:'rgba(74,159,255,0.15)', borderWidth:1,
+        backgroundColor:'transparent', fill:false, pointRadius:0, tension:.3, borderDash:[3,3] },
+      { label:'10-yr avg', data:avg, borderColor:'rgba(74,159,255,0.35)', borderWidth:1.5,
+        borderDash:[6,4], pointRadius:0, tension:.3 },
+      { label:prev, data:cumPrev, borderColor:'rgba(90,112,144,0.6)', borderWidth:1.5,
+        pointRadius:0, tension:.3, borderDash:[4,3] },
+      { label:cur, data:cumCur, borderColor:'#26c6a0', borderWidth:3,
+        pointRadius: cumCur.filter(v=>v!=null).length > 0 ? 5 : 0,
+        pointBackgroundColor:'#26c6a0', pointBorderColor:'#0b1828', pointBorderWidth:2,
+        tension:.3 },
     ]},
     options:{
       ...BR_OPTS('Mt'),
       plugins:{ ...BR_OPTS('').plugins,
-        legend:{ labels:{ color:'#5a6070', font:{size:11,family:MONO_FONT}, boxWidth:14,
+        legend:{ labels:{ color:'#4a6080', font:{size:11,family:MONO_FONT}, boxWidth:14,
           filter: item => !item.text.startsWith('_') }}},
     },
   });
@@ -909,15 +907,17 @@ async function loadBrazil() {
   _brCharts.mix = new Chart(document.getElementById('chart-br-mix'), {
     type:'line',
     data:{ labels:Q_LABELS, datasets:[
-      { label:prev, data:d.prev_mix||[], borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
-        pointRadius:0, tension:.3, borderDash:[5,3] },
-      { label:cur,  data:curMix, borderColor:COLORS.bull, borderWidth:2.5,
+      { label:prev, data:d.prev_mix||[], borderColor:'rgba(90,112,144,0.55)', borderWidth:1.5,
+        pointRadius:0, tension:.3, borderDash:[4,3] },
+      { label:cur, data:curMix, borderColor:'#26c6a0', borderWidth:2.5,
         pointRadius: curMix.filter(v=>v!=null).length<=4 ? 5 : 0,
-        pointBackgroundColor:COLORS.bull, tension:.3 },
+        pointBackgroundColor:'#26c6a0', pointBorderColor:'#0b1828', pointBorderWidth:2,
+        tension:.3 },
     ]},
     options:{...BR_OPTS('%'),
-      scales:{...BR_OPTS('').scales, y:{...CHART_DEFAULTS.scales.y, min:0, max:65,
-        title:{display:true,text:'%',color:'#555',font:{size:11}}}}},
+      scales:{...BR_OPTS('').scales,
+        y:{...CHART_DEFAULTS.scales.y, min:0, max:65,
+           title:{display:true,text:'%',color:'#3a5068',font:{size:11,family:MONO_FONT}}}}},
   });
 
   // ── ATR biweekly ──────────────────────────────────────────────────────────
@@ -925,60 +925,74 @@ async function loadBrazil() {
   _brCharts.atr = new Chart(document.getElementById('chart-br-atr'), {
     type:'line',
     data:{ labels:Q_LABELS, datasets:[
-      { label:prev, data:d.prev_atr||[], borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
-        pointRadius:0, tension:.3, borderDash:[5,3] },
-      { label:cur,  data:curAtr, borderColor:COLORS.amber, borderWidth:2.5,
+      { label:prev, data:d.prev_atr||[], borderColor:'rgba(90,112,144,0.55)', borderWidth:1.5,
+        pointRadius:0, tension:.3, borderDash:[4,3] },
+      { label:cur, data:curAtr, borderColor:'#f57c00', borderWidth:2.5,
         pointRadius: curAtr.filter(v=>v!=null).length<=4 ? 5 : 0,
-        pointBackgroundColor:COLORS.amber, tension:.3 },
+        pointBackgroundColor:'#f57c00', pointBorderColor:'#0b1828', pointBorderWidth:2,
+        tension:.3 },
     ]},
-    options:BR_OPTS('kg/t'),
+    options:{...BR_OPTS('kg/t'),
+      scales:{...BR_OPTS('').scales,
+        y:{...CHART_DEFAULTS.scales.y,
+           title:{display:true,text:'kg/t',color:'#3a5068',font:{size:11,family:MONO_FONT}}}}},
   });
 
-  // ── Annual avg Mix% bar chart ─────────────────────────────────────────────
+  // ── Annual avg Mix% + ATR bar charts ─────────────────────────────────────
   const totals   = d.season_totals || [];
   const annRev   = [...totals].reverse();  // oldest → newest
-  const annLabels = annRev.map(t => String(t.safra).replace('/','/'));
+  const annLabels = annRev.map(t => String(t.safra));
   const annMix    = annRev.map(t => t.avg_mix);
   const annAtr    = annRev.map(t => t.avg_atr);
-  const annMixBg  = annRev.map(t => t.safra === cur ? 'rgba(245,158,11,0.85)' : 'rgba(77,159,255,0.38)');
-  const annAtrBg  = annRev.map(t => t.safra === cur ? 'rgba(245,158,11,0.85)' : 'rgba(122,128,144,0.38)');
-  const annOpts = (yLabel, max) => ({
+  // SOLID colors — no alpha gradients
+  const annMixBg = annRev.map(t => t.safra === cur ? '#f57c00' : '#1a4a70');
+  const annAtrBg = annRev.map(t => t.safra === cur ? '#f57c00' : '#1a3a58');
+  const annOpts = (yLabel, yMax) => ({
     ...CHART_DEFAULTS,
     plugins:{...CHART_DEFAULTS.plugins, legend:{display:false}},
     scales:{
-      x:{...CHART_DEFAULTS.scales.x, ticks:{color:'#3e4250',font:{size:9,family:MONO_FONT},maxRotation:45}},
-      y:{...CHART_DEFAULTS.scales.y, min:0, max:max||undefined,
-         title:{display:true,text:yLabel,color:'#555',font:{size:10}}},
+      x:{ ...CHART_DEFAULTS.scales.x,
+          ticks:{color:'#3a5068',font:{size:9,family:MONO_FONT},maxRotation:40},
+          grid:{...CHART_DEFAULTS.scales.x.grid} },
+      y:{ ...CHART_DEFAULTS.scales.y, min:0, max:yMax||undefined,
+          title:{display:true,text:yLabel,color:'#3a5068',font:{size:10,family:MONO_FONT}} },
     },
   });
 
   _brCharts.annmix = new Chart(document.getElementById('chart-br-annmix'), {
     type:'bar',
     data:{ labels:annLabels, datasets:[{ label:'Avg Mix %', data:annMix,
-      backgroundColor:annMixBg, borderWidth:0 }]},
+      backgroundColor:annMixBg, borderWidth:0,
+      barPercentage:0.98, categoryPercentage:0.90 }]},
     options:annOpts('%', 65),
   });
   _brCharts.annatr = new Chart(document.getElementById('chart-br-annatr'), {
     type:'bar',
     data:{ labels:annLabels, datasets:[{ label:'Avg ATR kg/t', data:annAtr,
-      backgroundColor:annAtrBg, borderWidth:0 }]},
+      backgroundColor:annAtrBg, borderWidth:0,
+      barPercentage:0.98, categoryPercentage:0.90 }]},
     options:annOpts('kg/t', null),
   });
 
-  // ── Ethanol biweekly stacked ──────────────────────────────────────────────
+  // ── Ethanol biweekly stacked — solid colors, dense bars ─────────────────
   _brCharts.eth = new Chart(document.getElementById('chart-br-eth'), {
     type:'bar',
     data:{ labels:Q_LABELS, datasets:[
-      { label:`Anhydrous ${prev}`, data:d.prev_eth_an||[],  backgroundColor:'rgba(77,159,255,0.22)', stack:'prev' },
-      { label:`Hydrous ${prev}`,   data:d.prev_eth_hid||[], backgroundColor:'rgba(77,159,255,0.10)', stack:'prev' },
-      { label:`Anhydrous ${cur}`,  data:d.cur_eth_an||[],   backgroundColor:'rgba(0,217,126,0.55)',  stack:'cur' },
-      { label:`Hydrous ${cur}`,    data:d.cur_eth_hid||[],  backgroundColor:'rgba(0,217,126,0.22)',  stack:'cur' },
+      { label:`Anhydrous ${prev}`, data:d.prev_eth_an||[],  backgroundColor:'#1b3f62', stack:'prev',
+        barPercentage:0.98, categoryPercentage:0.88 },
+      { label:`Hydrous ${prev}`,   data:d.prev_eth_hid||[], backgroundColor:'#122c48', stack:'prev',
+        barPercentage:0.98, categoryPercentage:0.88 },
+      { label:`Anhydrous ${cur}`,  data:d.cur_eth_an||[],   backgroundColor:'#26c6a0', stack:'cur',
+        barPercentage:0.98, categoryPercentage:0.88 },
+      { label:`Hydrous ${cur}`,    data:d.cur_eth_hid||[],  backgroundColor:'#1a7c64', stack:'cur',
+        barPercentage:0.98, categoryPercentage:0.88 },
     ]},
     options:{...BR_OPTS('Mm³'),
-      plugins:{...BR_OPTS('').plugins, legend:{labels:{color:'#5a6070',font:{size:10,family:MONO_FONT},boxWidth:10}}},
+      plugins:{...BR_OPTS('').plugins, legend:{labels:{color:'#4a6080',font:{size:10,family:MONO_FONT},boxWidth:10}}},
       scales:{...BR_OPTS('').scales,
         x:{...CHART_DEFAULTS.scales.x, stacked:true},
-        y:{...CHART_DEFAULTS.scales.y, stacked:true, title:{display:true,text:'Mm³',color:'#555',font:{size:11}}}},
+        y:{...CHART_DEFAULTS.scales.y, stacked:true,
+           title:{display:true,text:'Mm³',color:'#3a5068',font:{size:11,family:MONO_FONT}}}},
     },
   });
 
@@ -1028,26 +1042,51 @@ async function loadBrazil() {
     </tr>`;
   }).join('');
 
-  // ── Historical season totals ──────────────────────────────────────────────
-  document.getElementById('br-hist-tbody').innerHTML = totals.map((t, i) => {
-    const isCurrent = i === 0;
-    const yoyCls = t.yoy_sugar!=null ? (t.yoy_sugar>0?'bear-text':'bull-text') : 'dim-text';
-    const sugarCell = t.complete
-      ? t.total_sugar.toFixed(2)
-      : `<span style="color:var(--neut)">${t.total_sugar.toFixed(2)} ▲</span>`;
-    return `<tr style="${isCurrent?'background:rgba(245,158,11,0.05)':''}">
-      <td class="text-mono" style="${isCurrent?'color:var(--neut);font-weight:700':''}">
-        ${t.safra}${isCurrent?'<span style="font-size:9px;margin-left:6px;color:var(--dim);font-weight:400;letter-spacing:1px">IN PROGRESS</span>':''}
-      </td>
-      <td class="text-right text-mono" style="${isCurrent?'font-weight:700':''}">${sugarCell}</td>
-      <td class="text-right text-mono"><span class="${yoyCls}">${t.yoy_sugar!=null?_sgn(t.yoy_sugar):'—'}</span></td>
-      <td class="text-right text-mono">${_n(t.total_cane,1)}</td>
-      <td class="text-right text-mono">${_n(t.total_eth,2)}</td>
-      <td class="text-right text-mono">${t.avg_mix!=null?t.avg_mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono">${_n(t.avg_atr,1)}</td>
-      <td><span style="font-size:10px;font-family:var(--mono);color:${t.complete?'var(--dim)':'var(--neut)'}">
-        ${t.complete?'complete':`Q${t.n_q}/24`}</span>
-      </td>
+  // ── Historical season totals — TRANSPOSED: rows = variables, cols = seasons ─
+  // Show last 11 seasons (oldest → newest, current last)
+  const histCols = totals.slice(0, 11).reverse();
+
+  // Header: Metric | 2016/17 | ... | 2026/27 ▶
+  document.getElementById('br-hist-thead').innerHTML = `<tr>
+    <th style="text-align:left;min-width:115px;color:var(--dim)">Metric</th>
+    ${histCols.map(s => {
+      const isCur = s.safra === cur;
+      return `<th class="text-right" style="${isCur
+        ? 'color:var(--neut);font-weight:700;border-bottom:2px solid var(--neut)'
+        : 'color:var(--dim)'}">
+        ${s.safra}${isCur ? '<span style="font-size:9px;color:var(--dim);font-weight:400"> ▶</span>' : ''}
+      </th>`;
+    }).join('')}
+  </tr>`;
+
+  // Rows: one variable per row
+  const HIST_METRICS = [
+    { label: 'Sugar (Mt)',    get: (s) => {
+        const v = s.total_sugar;
+        if (v == null) return '—';
+        return s.complete ? v.toFixed(2) : `<span style="color:var(--neut)">${v.toFixed(2)} ▲</span>`;
+      }, cls: () => '' },
+    { label: 'YoY Sugar',     get: (s) => s.yoy_sugar!=null ? _sgn(s.yoy_sugar) : '—',
+      cls: (s) => s.yoy_sugar!=null ? (s.yoy_sugar>0?'bear-text':'bull-text') : 'dim-text' },
+    { label: 'Cane (Mt)',     get: (s) => _n(s.total_cane, 1), cls: () => '' },
+    { label: 'Ethanol (Mm³)', get: (s) => _n(s.total_eth,  2), cls: () => '' },
+    { label: 'Avg Mix %',     get: (s) => s.avg_mix!=null ? s.avg_mix.toFixed(1)+'%' : '—', cls: () => '' },
+    { label: 'Avg ATR',       get: (s) => _n(s.avg_atr, 1), cls: () => '' },
+    { label: 'Periods',       get: (s) => s.complete ? `${s.n_q}/24 ✓` : `${s.n_q}/24`,
+      cls: (s) => s.complete ? 'dim-text' : 'neut-text' },
+  ];
+
+  document.getElementById('br-hist-tbody').innerHTML = HIST_METRICS.map((m, mi) => {
+    const rowBg = mi % 2 === 1 ? 'background:rgba(26,45,63,0.25)' : '';
+    return `<tr style="${rowBg}">
+      <td style="color:var(--dim);font-size:11px;letter-spacing:.3px">${m.label}</td>
+      ${histCols.map(s => {
+        const isCur = s.safra === cur;
+        const cls = m.cls(s);
+        return `<td class="text-right text-mono ${cls}" style="${isCur?'font-weight:600;background:rgba(245,124,0,0.07)':''}">
+          ${m.get(s)}
+        </td>`;
+      }).join('')}
     </tr>`;
   }).join('');
 }
