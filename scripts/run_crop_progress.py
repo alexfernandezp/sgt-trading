@@ -1,15 +1,15 @@
 """
-Brazil Crop Progress runner — ejecutar manualmente cuando UNICA publica (~cada 15 días).
+Brazil Crop Progress runner — ejecutar cuando UNICA publica (~cada 15 días).
 
 Workflow:
-  1. Descarga el PDF quinzenal más reciente de UNICA y lo parsea.
-  2. Persiste los datos en unica_biweekly (region=CS, source=pdf_unica).
-  3. Calcula señales z-score / percentil vs baseline histórico 2012-2024.
-  4. Imprime reporte en consola y guarda en logs/crop_progress_YYYYMMDD.log.
+  1. Descarga PDF quinzenal más reciente de UNICA.
+  2. Parsea Tabelas 3-7, de-acumula a neto por quincena, upsert en unica_biweekly.
+  3. Calcula señales ALL-IN (cumsum, robust_stats, descomposición, proyección, bias).
+  4. Imprime reporte completo en consola y logs/crop_progress_YYYYMMDD.log.
 
 Uso:
-    python scripts/run_crop_progress.py
-    python scripts/run_crop_progress.py --no-fetch   # solo recalcula señales sin bajar PDF nuevo
+    py scripts/run_crop_progress.py
+    py scripts/run_crop_progress.py --no-fetch   # solo recalcula sin bajar PDF nuevo
 """
 import sys, os, logging
 from datetime import datetime
@@ -47,7 +47,7 @@ def run():
 
     with SessionLocal() as session:
 
-        # 1. Fetch y persist nuevo PDF UNICA (si no se omite)
+        # 1. Fetch y persist quincenas del PDF UNICA
         if not no_fetch:
             logger.info("[1] Descargando último reporte quinzenal UNICA...")
             try:
@@ -56,7 +56,8 @@ def run():
                 if data:
                     saved = save_unica_to_db(session, data)
                     logger.info(
-                        "  UNICA idM=%s  safra=%s  Q%d/%d  acucar=%.3f Mt  proyeccion=%s Mt  saved=%s",
+                        "  UNICA idM=%s  safra=%s  Q%d/%d  "
+                        "acucar_acum=%.3f Mt  proyeccion=%s Mt  saved=%s",
                         data.get("idm_source", "?"),
                         data.get("safra", "?"),
                         data.get("quinzena_num", 0),
@@ -68,7 +69,7 @@ def run():
                 else:
                     logger.warning("  UNICA: sin datos disponibles")
             except Exception as e:
-                logger.error("  UNICA fetch/save: %s", e)
+                logger.error("  UNICA fetch/save: %s", e, exc_info=True)
         else:
             logger.info("[1] Skipping UNICA fetch (--no-fetch)")
 
@@ -79,18 +80,32 @@ def run():
             report = format_crop_progress_report(signals)
             logger.info("\n%s", report)
 
-            # Resumen clave
             if not signals.get("error"):
+                sig_a = signals.get("A_cane_pace") or {}
+                sig_b = signals.get("B_sugar_pace") or {}
+                proj  = signals.get("F_proj") or {}
+                proj_sugar = proj.get("sugar") or {}
                 logger.info(
-                    "SIGNALS: crushing_z=%s  sugar_mix_z=%s  atr_delta=%s  yoy_cane=%s%%  proj=%s Mt",
-                    signals.get("crushing_pace_z"),
-                    signals.get("sugar_mix_pct_z"),
-                    signals.get("atr_delta"),
+                    "SUMMARY: safra=%s seq=%d | "
+                    "cum_cane=%.2fMt cum_sugar=%.2fMt | "
+                    "yoy_cane=%s%% yoy_sugar=%s%% | "
+                    "cane_mZ=%s [%s] sugar_mZ=%s [%s] | "
+                    "atr_delta=%s kg/t | "
+                    "proj_sugar=%s Mt | bias=%s",
+                    signals.get("latest_safra"),
+                    signals.get("latest_seq", 0),
+                    signals.get("cum_cane_mt") or 0,
+                    signals.get("cum_sugar_mt") or 0,
                     signals.get("yoy_cane_pct"),
-                    signals.get("projected_sugar_mt"),
+                    signals.get("yoy_sugar_pct"),
+                    sig_a.get("modified_z"), sig_a.get("conviction"),
+                    sig_b.get("modified_z"), sig_b.get("conviction"),
+                    signals.get("atr_delta"),
+                    proj_sugar.get("point_mt"),
+                    signals.get("H_bias_ice11"),
                 )
         except Exception as e:
-            logger.error("  compute_crop_progress: %s", e)
+            logger.error("  compute_crop_progress: %s", e, exc_info=True)
 
     elapsed = (datetime.now() - t0).total_seconds()
     logger.info("Crop Progress completado en %.1fs  →  %s", elapsed, LOG_FILE)

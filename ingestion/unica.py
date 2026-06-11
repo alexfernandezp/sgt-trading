@@ -363,11 +363,13 @@ def save_unica_to_db(session, data: dict) -> bool:
         return False
 
     # Parsear Tabelas 3-7 (acumulado) y de-acumular
-    t3 = _parse_cumulative_table(full_text, 3)  # caña (mil t)
-    t4 = _parse_cumulative_table(full_text, 4)  # azúcar (mil t)
-    t5 = _parse_cumulative_table(full_text, 5)  # etanol total (Ml)
-    t6 = _parse_cumulative_table(full_text, 6)  # etanol anidro (Ml)
-    t7 = _parse_cumulative_table(full_text, 7)  # etanol hidratado (Ml)
+    # Tabelas 3-4: caña/azúcar en toneladas (valores como 20.396.162 → 20396162 t)
+    # Tabelas 5-7: etanol en millones de litros (ML → m³ via ×1000)
+    t3 = _parse_cumulative_table(full_text, 3)  # caña (toneladas)
+    t4 = _parse_cumulative_table(full_text, 4)  # azúcar (toneladas)
+    t5 = _parse_cumulative_table(full_text, 5)  # etanol total (ML)
+    t6 = _parse_cumulative_table(full_text, 6)  # etanol anidro (ML)
+    t7 = _parse_cumulative_table(full_text, 7)  # etanol hidratado (ML)
 
     cum_cane  = {seq: v["cs_cur"] for seq, v in t3.items()}
     cum_sugar = {seq: v["cs_cur"] for seq, v in t4.items()}
@@ -386,10 +388,12 @@ def save_unica_to_db(session, data: dict) -> bool:
         logger.warning("UNICA save_unica_to_db: Tabelas 3-7 vacías para %s", safra_norm)
         return False
 
-    def _to_t(v_kt):
-        return int(round(v_kt * 1000)) if v_kt is not None else None
+    def _to_t(v_t):
+        # raw values from Tabelas 3-4 are already in toneladas
+        return int(round(v_t)) if v_t is not None else None
 
     def _to_m3(v_ml):
+        # raw values from Tabelas 5-7 are in millones de litros (ML); 1 ML = 1000 m³
         return int(round(v_ml * 1000)) if v_ml is not None else None
 
     saved = 0
@@ -408,10 +412,10 @@ def save_unica_to_db(session, data: dict) -> bool:
         # Validar rangos (mil t → t después de conversión)
         try:
             if raw_cane is not None:
-                validate_range(raw_cane * 1000, min_value=0, max_value=80e6,
+                validate_range(raw_cane, min_value=0, max_value=80e6,
                                source="unica_pdf", field="cane_net_t", allow_none=False)
             if raw_sugar is not None:
-                validate_range(raw_sugar * 1000, min_value=0, max_value=6e6,
+                validate_range(raw_sugar, min_value=0, max_value=6e6,
                                source="unica_pdf", field="sugar_net_t", allow_none=False)
             if atr is not None:
                 validate_range(atr, min_value=100, max_value=160,
