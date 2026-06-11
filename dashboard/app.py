@@ -317,18 +317,66 @@ def api_unica():
         "proj_reliable":   cur_q_num >= 6,
     }
 
+    # ── YoY on season totals ─────────────────────────────────────────────────
+    for i, st in enumerate(season_totals):
+        prev_st = season_totals[i + 1] if i + 1 < len(season_totals) else None
+        st["yoy_sugar"] = (round((st["total_sugar"] - prev_st["total_sugar"]) /
+                                  prev_st["total_sugar"] * 100, 1)
+                           if prev_st and prev_st["total_sugar"] > 0 else None)
+
+    # ── Historical range per Q (p25/avg/p75 across 10 complete safras) ────────
+    COMPLETE_KEYS = [sk for sk in safra_list[1:] if len(cs_by_safra[sk]) >= 23][:10]
+    MAX_Q = 24
+    hist_range_min, hist_range_p25, hist_range_avg, hist_range_p75, hist_range_max = \
+        [], [], [], [], []
+    for qi in range(MAX_Q):
+        vals = sorted([cum_sugar[sk][qi] for sk in COMPLETE_KEYS
+                       if qi < len(cum_sugar.get(sk, []))])
+        if vals:
+            n = len(vals)
+            hist_range_min.append(round(vals[0], 2))
+            hist_range_p25.append(round(vals[max(0, n // 4 - 1)], 2))
+            hist_range_avg.append(round(sum(vals) / n, 2))
+            hist_range_p75.append(round(vals[min(n - 1, 3 * n // 4)], 2))
+            hist_range_max.append(round(vals[-1], 2))
+        else:
+            for lst in [hist_range_min, hist_range_p25, hist_range_avg,
+                        hist_range_p75, hist_range_max]:
+                lst.append(None)
+
+    # ── Per-quincena series: only current + prev (clean comparison) ───────────
+    def _pad24(series):
+        """Pad series to 24 with None; truncate at 24."""
+        out = list(series[:24])
+        out += [None] * (24 - len(out))
+        return out
+
+    cur_mix  = _pad24([q["mix"] for q in cs_by_safra[current_safra]])
+    prev_mix = _pad24([q["mix"] for q in cs_by_safra[prev_safra]]) if prev_safra else []
+    cur_atr  = _pad24([q["atr"] for q in cs_by_safra[current_safra]])
+    prev_atr = _pad24([q["atr"] for q in cs_by_safra[prev_safra]]) if prev_safra else []
+    cur_eth_an  = _pad24([q["eth_an"]  for q in cs_by_safra[current_safra]])
+    cur_eth_hid = _pad24([q["eth_hid"] for q in cs_by_safra[current_safra]])
+    prev_eth_an  = _pad24([q["eth_an"]  for q in cs_by_safra[prev_safra]]) if prev_safra else []
+    prev_eth_hid = _pad24([q["eth_hid"] for q in cs_by_safra[prev_safra]]) if prev_safra else []
+
     return jsonify({
-        "summary":       summary,
-        "cur_detail":    cur_detail,
-        "season_totals": season_totals[:12],
-        "cum_sugar":     {k: cum_sugar[k] for k in safra_list[:7]},
-        "cum_eth":       {k: cum_eth[k]   for k in safra_list[:5]},
-        "mix_series":    {k: [q["mix"] for q in cs_by_safra[k]] for k in safra_list[:5]},
-        "atr_series":    {k: [q["atr"] for q in cs_by_safra[k]] for k in safra_list[:5]},
-        "sp_cum_sugar":  {k: [round(sum(q["sugar"] for q in sp_by_safra[k][:i+1] if q["sugar"]), 3)
-                              for i in range(len(sp_by_safra[k]))]
-                          for k in sorted(sp_by_safra.keys(), reverse=True)[:4]},
-        "safra_list":    safra_list,
+        "summary":        summary,
+        "cur_detail":     cur_detail,
+        "season_totals":  season_totals[:13],
+        "safra_list":     safra_list,
+        "prev_safra":     prev_safra,
+        # Accumulated sugar: current + prev + historical range
+        "cum_sugar_cur":  _pad24(cum_sugar[current_safra]),
+        "cum_sugar_prev": _pad24(cum_sugar[prev_safra]) if prev_safra else [],
+        "hist_p25":       hist_range_p25,
+        "hist_avg":       hist_range_avg,
+        "hist_p75":       hist_range_p75,
+        # Per-quincena comparison: current vs prev only
+        "cur_mix":   cur_mix,  "prev_mix":  prev_mix,
+        "cur_atr":   cur_atr,  "prev_atr":  prev_atr,
+        "cur_eth_an":  cur_eth_an,  "cur_eth_hid":  cur_eth_hid,
+        "prev_eth_an": prev_eth_an, "prev_eth_hid": prev_eth_hid,
     })
 
 

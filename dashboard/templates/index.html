@@ -296,111 +296,142 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
      TAB 2: BRAZIL / UNICA
 ===================================================== -->
 <div id="tab-brazil" class="tab-panel">
-  <div class="section-header">
-    <span class="section-title">Brazil Crop Progress — Centro-Sul</span>
-    <span class="section-sub" id="br-header-sub">UNICA biweekly</span>
-    <div class="section-divider"></div>
-    <span id="br-proj-badge" style="font-size:11px;padding:3px 10px;border-radius:4px;background:var(--blue-bg);color:var(--blue)"></span>
+
+  <!-- ── Top info bar ───────────────────────────────── -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:15px;font-weight:700;color:var(--text);letter-spacing:.3px">Centro-Sul · Acompanhamento Quinzenal</div>
+      <div style="font-size:12px;color:var(--dim);margin-top:3px" id="br-subline">UNICA · cargando…</div>
+    </div>
+    <div id="br-proj-block" style="text-align:right;display:none">
+      <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Proyección CS</div>
+      <div style="font-size:18px;font-weight:700;font-family:var(--mono)" id="br-proj-val">—</div>
+      <div style="font-size:10px;margin-top:1px" id="br-proj-caveat"></div>
+    </div>
   </div>
 
-  <!-- KPI row: 6 cards -->
-  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:18px">
-    <div class="kpi-card">
-      <div class="kpi-label">Safra / Quincena</div>
-      <div class="kpi-value blue-text" id="br-safra">—</div>
-      <div class="kpi-sub" id="br-qdate" style="font-family:var(--mono)"></div>
+  <!-- ── KPI 4 cards ────────────────────────────────── -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+
+    <div class="kpi-card blue">
+      <div class="kpi-label">Azúcar CS acum.</div>
+      <div class="kpi-value blue-text" id="br-cum-sugar">—</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
+        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+        <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-sugar-badge">—</span>
+      </div>
     </div>
-    <div class="kpi-card" id="br-kpi-cane">
+
+    <div class="kpi-card">
       <div class="kpi-label">Caña CS acum.</div>
       <div class="kpi-value" id="br-cum-cane">—</div>
-      <div class="kpi-sub"><span id="br-yoy-cane-pct" style="font-family:var(--mono)"></span> YoY</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
+        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+        <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-cane-badge">—</span>
+      </div>
     </div>
-    <div class="kpi-card" id="br-kpi-sugar">
-      <div class="kpi-label">Azúcar CS acum.</div>
-      <div class="kpi-value" id="br-cum-sugar">—</div>
-      <div class="kpi-sub"><span id="br-yoy-sugar-pct" style="font-family:var(--mono)"></span> YoY</div>
-    </div>
+
     <div class="kpi-card" id="br-kpi-mix">
       <div class="kpi-label">Mix Azúcar %</div>
       <div class="kpi-value" id="br-mix">—</div>
-      <div class="kpi-sub">última quincena</div>
+      <div style="font-size:11px;color:var(--dim);margin-top:5px">última quincena · <span id="br-atr-inline" style="font-family:var(--mono)"></span> ATR</div>
     </div>
+
     <div class="kpi-card">
-      <div class="kpi-label">ATR kg/t</div>
-      <div class="kpi-value blue-text" id="br-atr">—</div>
-      <div class="kpi-sub">última quincena</div>
-    </div>
-    <div class="kpi-card" id="br-kpi-eth">
-      <div class="kpi-label">Etanol CS acum.</div>
+      <div class="kpi-label">Etanol Total acum.</div>
       <div class="kpi-value" id="br-cum-eth">—</div>
-      <div class="kpi-sub"><span id="br-yoy-eth-pct" style="font-family:var(--mono)"></span> YoY Mm³</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
+        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+        <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-eth-badge">—</span>
+      </div>
     </div>
   </div>
 
-  <!-- Azúcar acumulada — chart principal, ancho completo -->
+  <!-- ── Hero chart: azúcar acumulada + rango histórico ── -->
   <div class="card mb-16">
-    <div class="card-title">Azúcar CS acumulada por quincena — últimas 7 safras (Mt)</div>
-    <div class="chart-wrap" style="height:280px"><canvas id="chart-br-cum-sugar"></canvas></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div class="card-title" style="margin-bottom:0">Azúcar CS Acumulada (Mt) · Rango histórico 10 safras</div>
+      <div style="display:flex;gap:16px;font-size:11px;align-items:center">
+        <span style="display:flex;align-items:center;gap:5px">
+          <span style="width:20px;height:3px;background:var(--bull);display:inline-block;border-radius:2px"></span>
+          <span id="br-legend-cur" style="color:var(--dim)">—</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:5px">
+          <span style="width:20px;height:2px;background:var(--blue);display:inline-block;border-radius:2px"></span>
+          <span id="br-legend-prev" style="color:var(--dim)">—</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:5px">
+          <span style="width:20px;height:8px;background:rgba(74,158,255,0.12);display:inline-block;border-radius:2px;border:1px solid rgba(74,158,255,0.25)"></span>
+          <span style="color:var(--dim)">Rango p25-p75</span>
+        </span>
+      </div>
+    </div>
+    <div style="position:relative;height:300px"><canvas id="chart-br-main"></canvas></div>
   </div>
 
-  <!-- Fila 2: Mix% + ATR -->
+  <!-- ── Fila 2: Mix% + ATR (solo current vs prev) ─── -->
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">Mix azúcar % por quincena — últimas 5 safras</div>
-      <div class="chart-wrap"><canvas id="chart-br-mix"></canvas></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:0">Mix Azúcar % · Quinzenal</div>
+        <span style="font-size:10px;color:var(--muted)" id="br-mix-legend"></span>
+      </div>
+      <div style="position:relative;height:200px"><canvas id="chart-br-mix"></canvas></div>
     </div>
     <div class="card">
-      <div class="card-title">ATR kg/t por quincena — últimas 5 safras</div>
-      <div class="chart-wrap"><canvas id="chart-br-atr"></canvas></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:0">ATR kg/t · Quinzenal</div>
+        <span style="font-size:10px;color:var(--muted)" id="br-atr-legend"></span>
+      </div>
+      <div style="position:relative;height:200px"><canvas id="chart-br-atr"></canvas></div>
     </div>
   </div>
 
-  <!-- Fila 3: Etanol acum + SP breakdown -->
-  <div class="grid-2">
-    <div class="card">
-      <div class="card-title">Etanol CS acumulado — últimas 5 safras (Mm³)</div>
-      <div class="chart-wrap"><canvas id="chart-br-eth"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Azúcar SP acumulado — últimas 4 safras (Mt)</div>
-      <div class="chart-wrap"><canvas id="chart-br-sp"></canvas></div>
-    </div>
-  </div>
-
-  <!-- Tabla quincenal detallada safra actual vs anterior -->
+  <!-- ── Fila 3: Etanol quinzenal (anidro + hidratado) ── -->
   <div class="card mb-16">
-    <div class="card-title" id="br-detail-title">Detalle quincenal — safra actual vs anterior</div>
+    <div class="card-title">Etanol CS Quinzenal (Mm³) · Anidro + Hidratado</div>
+    <div style="position:relative;height:200px"><canvas id="chart-br-eth"></canvas></div>
+  </div>
+
+  <!-- ── Tabla quincenal detallada ────────────────────── -->
+  <div class="card mb-16">
+    <div class="card-title" id="br-detail-title">Detalle quincenal · safra actual</div>
     <div style="overflow-x:auto">
-      <table class="data-table w-full">
-        <thead><tr>
-          <th>Q</th><th>Fecha</th>
-          <th class="text-right">Caña Qt (Mt)</th>
-          <th class="text-right">Azúcar Qt (Mt)</th>
-          <th class="text-right">Mix %</th>
-          <th class="text-right">ATR</th>
-          <th class="text-right">Eth An. (Mm³)</th>
-          <th class="text-right">Eth Hid. (Mm³)</th>
-          <th class="text-right">Acum. Azúcar</th>
-          <th class="text-right">YoY Q</th>
-        </tr></thead>
+      <table class="data-table w-full" style="font-size:12px">
+        <thead>
+          <tr>
+            <th style="width:30px">Q</th>
+            <th>Fecha</th>
+            <th class="text-right">Caña (Mt)</th>
+            <th class="text-right">Azúcar (Mt)</th>
+            <th class="text-right">Mix %</th>
+            <th class="text-right">ATR kg/t</th>
+            <th class="text-right">Eth. An. Mm³</th>
+            <th class="text-right">Eth. Hid. Mm³</th>
+            <th class="text-right">Acum. Azúcar</th>
+            <th class="text-right">YoY vs Q-ant</th>
+          </tr>
+        </thead>
         <tbody id="br-detail-tbody"></tbody>
       </table>
     </div>
   </div>
 
-  <!-- Tabla histórico safras completas -->
+  <!-- ── Tabla histórico safras ────────────────────────── -->
   <div class="card">
-    <div class="card-title">Histórico safras CS — producción total anual</div>
-    <table class="data-table w-full">
-      <thead><tr>
-        <th>Safra</th>
-        <th class="text-right">Azúcar Total (Mt)</th>
-        <th class="text-right">Caña Total (Mt)</th>
-        <th class="text-right">Etanol (Mm³)</th>
-        <th class="text-right">Mix % prom</th>
-        <th class="text-right">ATR prom</th>
-        <th class="text-right">Q</th>
-      </tr></thead>
+    <div class="card-title">Histórico Centro-Sul · Producción anual</div>
+    <table class="data-table w-full" style="font-size:12px">
+      <thead>
+        <tr>
+          <th>Safra</th>
+          <th class="text-right">Azúcar (Mt)</th>
+          <th class="text-right">YoY</th>
+          <th class="text-right">Caña (Mt)</th>
+          <th class="text-right">Etanol (Mm³)</th>
+          <th class="text-right">Mix % prom</th>
+          <th class="text-right">ATR prom</th>
+        </tr>
+      </thead>
       <tbody id="br-hist-tbody"></tbody>
     </table>
   </div>
@@ -747,167 +778,219 @@ async function loadSignal() {
 
 // ── Tab: Brazil ──
 let _brCharts = {};
-function _destroyBrCharts() { Object.values(_brCharts).forEach(c => c && c.destroy()); _brCharts = {}; }
-
-function _pct(v) { return v!=null ? (v>=0?'+':'')+v.toFixed(1)+'%' : '—'; }
-function _pctCls(v, invertSign) {
-  if (v==null) return '';
-  const pos = invertSign ? v < 0 : v > 0;
-  return pos ? 'bull-text' : v === 0 ? '' : 'bear-text';
+function _brKill() { Object.values(_brCharts).forEach(c => { try{c.destroy()}catch(e){} }); _brCharts={}; }
+function _sgn(v) { return v!=null ? (v>=0?'+':'')+v.toFixed(1)+'%' : '—'; }
+function _sgnEl(el, v, bearIfPositive) {
+  if(v==null){el.textContent='—';el.className='';return;}
+  el.textContent = _sgn(v);
+  const isBear = bearIfPositive ? v>0 : v<0;
+  el.className = isBear ? 'bear-text' : v===0 ? '' : 'bull-text';
 }
+
+const BR_OPTS = (yLabel) => ({
+  ...CHART_DEFAULTS,
+  plugins: {
+    legend: { labels: { color:COLORS.dim, font:{size:10}, boxWidth:12,
+      filter: item => !item.text.startsWith('_') } },
+    tooltip: { ...CHART_DEFAULTS.plugins.tooltip,
+      callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y!=null?ctx.parsed.y.toFixed(2):'—'}` } }
+  },
+  scales: {
+    x: { ...CHART_DEFAULTS.scales.x },
+    y: { ...CHART_DEFAULTS.scales.y, title:{display:true,text:yLabel,color:COLORS.dim,font:{size:10}} }
+  }
+});
 
 async function loadBrazil() {
   const d = await fetch('/api/unica').then(r=>r.json());
   const sm = d.summary || {};
-  const PALETTE = [COLORS.bull, COLORS.blue, COLORS.purple, COLORS.neut,
-                   '#f97316', '#a855f7', '#06b6d4'];
   const Q_LABELS = Array.from({length:24}, (_,i) => `Q${i+1}`);
+  const cur = sm.safra || '—';
+  const prev = d.prev_safra || '—';
 
-  // ── KPIs ──
-  document.getElementById('br-safra').textContent = `${sm.safra||'—'} · Q${sm.q_num||'?'}`;
-  document.getElementById('br-qdate').textContent = sm.q_date || '';
-  document.getElementById('br-header-sub').textContent =
-    `UNICA · actualizado ${sm.q_date||'—'}`;
+  // ── Info bar ──────────────────────────────────────
+  document.getElementById('br-subline').textContent =
+    `UNICA · Safra ${cur} · Q${sm.q_num||'?'} de 24 · ${sm.q_date||'—'}`;
 
-  document.getElementById('br-cum-cane').textContent  = sm.cum_cane  !=null ? sm.cum_cane.toFixed(1)+' Mt'  : '—';
-  document.getElementById('br-cum-sugar').textContent = sm.cum_sugar !=null ? sm.cum_sugar.toFixed(3)+' Mt' : '—';
-  document.getElementById('br-cum-eth').textContent   = sm.cum_eth   !=null ? sm.cum_eth.toFixed(2)+' Mm³'  : '—';
-
-  const yc = sm.yoy_cane, ys = sm.yoy_sugar, ye = sm.yoy_eth;
-  // YoY alta caña = bearish para precio (más oferta); alta azúcar = bearish
-  document.getElementById('br-yoy-cane-pct').textContent  = _pct(yc);
-  document.getElementById('br-yoy-cane-pct').className    = _pctCls(yc, true);
-  document.getElementById('br-yoy-sugar-pct').textContent = _pct(ys);
-  document.getElementById('br-yoy-sugar-pct').className   = _pctCls(ys, true);
-  document.getElementById('br-yoy-eth-pct').textContent   = _pct(ye);
-
-  const mix = sm.mix;
-  document.getElementById('br-mix').textContent = mix!=null ? mix.toFixed(1)+'%' : '—';
-  document.getElementById('br-mix').className = 'kpi-value ' + (mix>48?'bull-text':mix<40?'bear-text':'neut-text');
-  document.getElementById('br-atr').textContent = sm.atr!=null ? sm.atr.toFixed(1) : '—';
-
-  // Proyección badge
-  if (sm.proj_sugar!=null) {
-    const caveat = sm.proj_reliable ? '' : ' ⚠ prematuro';
-    const el = document.getElementById('br-proj-badge');
-    el.textContent = `Proy. ${sm.safra}: ${sm.proj_sugar.toFixed(1)} Mt  (${sm.n_proj_hist} safras hist.${caveat})`;
-    if (!sm.proj_reliable) el.style.background = 'var(--neut-bg)', el.style.color = 'var(--neut)';
+  // Proyección
+  if (sm.proj_sugar != null) {
+    document.getElementById('br-proj-block').style.display = 'block';
+    const el = document.getElementById('br-proj-val');
+    el.textContent = sm.proj_sugar.toFixed(1) + ' Mt';
+    el.style.color = sm.proj_reliable ? 'var(--text)' : 'var(--neut)';
+    const cav = document.getElementById('br-proj-caveat');
+    cav.textContent = sm.proj_reliable
+      ? `vs ${sm.n_proj_hist} safras hist.`
+      : `⚠ prematuro (Q${sm.q_num} / 24)`;
+    cav.style.color = sm.proj_reliable ? 'var(--dim)' : 'var(--neut)';
   }
 
-  // ── Chart 1: Azúcar CS acumulada por quincena ──
-  _destroyBrCharts();
-  const cumSugar = d.cum_sugar || {};
-  const safraList = d.safra_list || [];
-  const ds1 = safraList.slice(0,7).map((sk,i) => ({
-    label: sk,
-    data:  cumSugar[sk] || [],
-    borderColor: PALETTE[i],
-    backgroundColor: 'transparent',
-    tension: .35, pointRadius: i===0?3:0, borderWidth: i===0?2.5:1.5,
-    borderDash: i===0 ? [] : (i>3?[4,3]:[]),
-  }));
-  _brCharts.cumSugar = new Chart(document.getElementById('chart-br-cum-sugar'), {
-    type:'line', data:{ labels:Q_LABELS, datasets:ds1 },
-    options:{ ...CHART_DEFAULTS,
-      plugins:{...CHART_DEFAULTS.plugins, legend:{labels:{color:COLORS.dim,font:{size:10},boxWidth:14}}},
-      scales:{...CHART_DEFAULTS.scales,
-        y:{...CHART_DEFAULTS.scales.y, title:{display:true,text:'Mt azúcar acumulada',color:COLORS.dim,font:{size:10}}}}},
-  });
+  // ── KPI cards ─────────────────────────────────────
+  document.getElementById('br-cum-sugar').textContent =
+    sm.cum_sugar!=null ? sm.cum_sugar.toFixed(3)+' Mt' : '—';
+  document.getElementById('br-cum-sugar').className = 'kpi-value blue-text';
 
-  // ── Chart 2: Mix azúcar % ──
-  const mixSeries = d.mix_series || {};
-  const ds2 = safraList.slice(0,5).map((sk,i) => ({
-    label: sk, data: mixSeries[sk]||[],
-    borderColor: PALETTE[i], backgroundColor:'transparent',
-    tension:.3, pointRadius:0, borderWidth: i===0?2:1.2,
-  }));
+  document.getElementById('br-cum-cane').textContent =
+    sm.cum_cane!=null ? sm.cum_cane.toFixed(1)+' Mt' : '—';
+
+  document.getElementById('br-cum-eth').textContent =
+    sm.cum_eth!=null ? sm.cum_eth.toFixed(3)+' Mm³' : '—';
+
+  // YoY badges: positivo = más producción = BEARISH para precio
+  _sgnEl(document.getElementById('br-yoy-sugar-badge'), sm.yoy_sugar, true);
+  _sgnEl(document.getElementById('br-yoy-cane-badge'),  sm.yoy_cane,  true);
+  _sgnEl(document.getElementById('br-yoy-eth-badge'),   sm.yoy_eth,   true);
+
+  // Mix + ATR en misma card
+  const mix = sm.mix;
+  document.getElementById('br-mix').textContent = mix!=null ? mix.toFixed(1)+'%' : '—';
+  document.getElementById('br-mix').className = 'kpi-value ' +
+    (mix>50?'bear-text' : mix>42?'neut-text' : 'bull-text');
+  document.getElementById('br-mix-legend').textContent = `${cur} vs ${prev}`;
+  document.getElementById('br-atr-legend').textContent  = `${cur} vs ${prev}`;
+  document.getElementById('br-atr-inline').textContent = sm.atr!=null ? sm.atr.toFixed(1) : '—';
+
+  // ── HERO CHART: rango histórico + 2 líneas ────────
+  _brKill();
+  const cumCur  = d.cum_sugar_cur  || [];
+  const cumPrev = d.cum_sugar_prev || [];
+  const p25  = d.hist_p25  || [];
+  const avg  = d.hist_avg  || [];
+  const p75  = d.hist_p75  || [];
+
+  _brCharts.main = new Chart(document.getElementById('chart-br-main'), {
+    type:'line',
+    data: { labels: Q_LABELS, datasets: [
+      // Banda: p25 bottom → fill to p75 (dataset +1)
+      { label: '_p25', data: p25,
+        borderColor: 'transparent', backgroundColor: 'rgba(74,158,255,0.10)',
+        fill: '+1', pointRadius: 0, tension:.4 },
+      // p75 top of band
+      { label: '_p75', data: p75,
+        borderColor: 'rgba(74,158,255,0.20)', borderWidth: 1,
+        backgroundColor: 'transparent', fill: false,
+        pointRadius: 0, tension:.4, borderDash:[3,3] },
+      // Promedio histórico
+      { label: 'Prom. 10 safras', data: avg,
+        borderColor: 'rgba(74,158,255,0.5)', borderWidth: 1.5,
+        borderDash:[6,4], pointRadius: 0, tension:.4 },
+      // Safra anterior
+      { label: prev, data: cumPrev,
+        borderColor: COLORS.blue, borderWidth: 2,
+        pointRadius: 0, tension:.4 },
+      // Safra actual — siempre al frente
+      { label: cur, data: cumCur,
+        borderColor: COLORS.bull, borderWidth: 3,
+        pointRadius: cumCur.filter(v=>v!=null).length > 0 ? 5 : 0,
+        pointBackgroundColor: COLORS.bull,
+        tension:.4 },
+    ]},
+    options: { ...BR_OPTS('Mt azúcar acumulada'),
+      plugins: { ...BR_OPTS('').plugins,
+        legend: { labels: { color:COLORS.dim, font:{size:10}, boxWidth:14,
+          filter: item => !item.text.startsWith('_') }}
+      }
+    },
+  });
+  document.getElementById('br-legend-cur').textContent  = cur;
+  document.getElementById('br-legend-prev').textContent = prev;
+
+  // ── Mix % ─────────────────────────────────────────
   _brCharts.mix = new Chart(document.getElementById('chart-br-mix'), {
-    type:'line', data:{ labels:Q_LABELS, datasets:ds2 },
-    options:{ ...CHART_DEFAULTS,
-      scales:{...CHART_DEFAULTS.scales,
-        y:{...CHART_DEFAULTS.scales.y,min:0,max:60,
-           title:{display:true,text:'Mix azúcar %',color:COLORS.dim,font:{size:10}}}}},
+    type: 'line',
+    data: { labels: Q_LABELS, datasets: [
+      { label: prev, data: d.prev_mix || [],
+        borderColor: COLORS.dim, borderWidth: 1.5,
+        pointRadius: 0, tension:.35, borderDash:[5,3] },
+      { label: cur, data: d.cur_mix || [],
+        borderColor: COLORS.bull, borderWidth: 2.5,
+        pointRadius: d.cur_mix.filter(v=>v!=null).length <= 4 ? 5 : 0,
+        tension:.35 },
+    ]},
+    options: { ...BR_OPTS('Mix azúcar %'),
+      scales: { ...BR_OPTS('').scales,
+        y: { ...CHART_DEFAULTS.scales.y, min:0, max:65,
+             title:{display:true,text:'Mix azúcar %',color:COLORS.dim,font:{size:10}} }}
+    },
   });
 
-  // ── Chart 3: ATR ──
-  const atrSeries = d.atr_series || {};
-  const ds3 = safraList.slice(0,5).map((sk,i) => ({
-    label: sk, data: atrSeries[sk]||[],
-    borderColor: PALETTE[i], backgroundColor:'transparent',
-    tension:.3, pointRadius:0, borderWidth: i===0?2:1.2,
-  }));
+  // ── ATR ───────────────────────────────────────────
   _brCharts.atr = new Chart(document.getElementById('chart-br-atr'), {
-    type:'line', data:{ labels:Q_LABELS, datasets:ds3 },
-    options:{ ...CHART_DEFAULTS,
-      scales:{...CHART_DEFAULTS.scales,
-        y:{...CHART_DEFAULTS.scales.y,
-           title:{display:true,text:'ATR kg/t',color:COLORS.dim,font:{size:10}}}}},
+    type: 'line',
+    data: { labels: Q_LABELS, datasets: [
+      { label: prev, data: d.prev_atr || [],
+        borderColor: COLORS.dim, borderWidth: 1.5,
+        pointRadius: 0, tension:.35, borderDash:[5,3] },
+      { label: cur, data: d.cur_atr || [],
+        borderColor: COLORS.neut, borderWidth: 2.5,
+        pointRadius: d.cur_atr.filter(v=>v!=null).length <= 4 ? 5 : 0,
+        tension:.35 },
+    ]},
+    options: BR_OPTS('ATR kg/t'),
   });
 
-  // ── Chart 4: Etanol acumulado ──
-  const cumEth = d.cum_eth || {};
-  const ds4 = safraList.slice(0,5).map((sk,i) => ({
-    label: sk, data: cumEth[sk]||[],
-    borderColor: PALETTE[i], backgroundColor:'transparent',
-    tension:.3, pointRadius:0, borderWidth: i===0?2:1.2,
-  }));
+  // ── Etanol quinzenal stacked ──────────────────────
   _brCharts.eth = new Chart(document.getElementById('chart-br-eth'), {
-    type:'line', data:{ labels:Q_LABELS, datasets:ds4 },
-    options:{ ...CHART_DEFAULTS,
-      scales:{...CHART_DEFAULTS.scales,
-        y:{...CHART_DEFAULTS.scales.y,
-           title:{display:true,text:'Etanol acum. Mm³',color:COLORS.dim,font:{size:10}}}}},
+    type: 'bar',
+    data: { labels: Q_LABELS, datasets: [
+      { label: `Anidro ${prev}`,   data: d.prev_eth_an  || [], backgroundColor:'rgba(74,158,255,0.3)',  stack:'prev' },
+      { label: `Hidratado ${prev}`,data: d.prev_eth_hid || [], backgroundColor:'rgba(74,158,255,0.15)', stack:'prev' },
+      { label: `Anidro ${cur}`,    data: d.cur_eth_an   || [], backgroundColor:'rgba(0,212,168,0.5)',   stack:'cur' },
+      { label: `Hidratado ${cur}`, data: d.cur_eth_hid  || [], backgroundColor:'rgba(0,212,168,0.25)',  stack:'cur' },
+    ]},
+    options: { ...BR_OPTS('Etanol quinzenal Mm³'),
+      plugins: { ...BR_OPTS('').plugins,
+        legend:{labels:{color:COLORS.dim,font:{size:10},boxWidth:10}}},
+      scales: { ...BR_OPTS('').scales,
+        x: { ...CHART_DEFAULTS.scales.x, stacked:true },
+        y: { ...CHART_DEFAULTS.scales.y, stacked:true,
+             title:{display:true,text:'Mm³',color:COLORS.dim,font:{size:10}}}},
+    },
   });
 
-  // ── Chart 5: SP acumulado ──
-  const spCum = d.sp_cum_sugar || {};
-  const spSafras = Object.keys(spCum).sort().reverse();
-  const ds5 = spSafras.map((sk,i) => ({
-    label:'SP '+sk, data:spCum[sk]||[],
-    borderColor: PALETTE[i], backgroundColor:'transparent',
-    tension:.3, pointRadius:0, borderWidth: i===0?2:1.2,
-  }));
-  _brCharts.sp = new Chart(document.getElementById('chart-br-sp'), {
-    type:'line', data:{ labels:Q_LABELS, datasets:ds5 },
-    options:{ ...CHART_DEFAULTS,
-      scales:{...CHART_DEFAULTS.scales,
-        y:{...CHART_DEFAULTS.scales.y,
-           title:{display:true,text:'SP azúcar acum. Mt',color:COLORS.dim,font:{size:10}}}}},
-  });
-
-  // ── Tabla quincenal detallada ──
+  // ── Tabla quincenal detallada ──────────────────────
   const detail = d.cur_detail || [];
+  document.getElementById('br-detail-title').textContent =
+    `Detalle quincenal · ${cur} (con comparativa vs ${prev})`;
   const tbody1 = document.getElementById('br-detail-tbody');
-  tbody1.innerHTML = detail.map(q => {
+  tbody1.innerHTML = detail.map((q, idx) => {
+    const isLast = idx === detail.length - 1;
+    const bg = isLast ? 'background:rgba(0,212,168,0.05)' : '';
     const yoyCls = q.yoy_q!=null ? (q.yoy_q<0?'bull-text':'bear-text') : 'ret-na';
-    return `<tr>
-      <td class="text-mono">${q.q}</td>
+    const n = (v, dp) => v!=null ? v.toFixed(dp) : '—';
+    return `<tr style="${bg}">
+      <td class="text-mono" style="color:var(--dim)">${q.q}</td>
       <td class="text-mono">${q.date||'—'}</td>
-      <td class="text-right text-mono">${q.cane!=null?q.cane.toFixed(3):'—'}</td>
-      <td class="text-right text-mono">${q.sugar!=null?q.sugar.toFixed(4):'—'}</td>
+      <td class="text-right text-mono">${n(q.cane,3)}</td>
+      <td class="text-right text-mono"><strong>${n(q.sugar,3)}</strong></td>
       <td class="text-right text-mono">${q.mix!=null?q.mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono">${q.atr!=null?q.atr.toFixed(1):'—'}</td>
-      <td class="text-right text-mono">${q.eth_an!=null?q.eth_an.toFixed(3):'—'}</td>
-      <td class="text-right text-mono">${q.eth_hid!=null?q.eth_hid.toFixed(3):'—'}</td>
-      <td class="text-right text-mono"><strong>${q.cum_sugar!=null?q.cum_sugar.toFixed(3):'—'}</strong></td>
-      <td class="text-right text-mono"><span class="${yoyCls}">${q.yoy_q!=null?_pct(q.yoy_q):'—'}</span></td>
+      <td class="text-right text-mono">${n(q.atr,1)}</td>
+      <td class="text-right text-mono">${n(q.eth_an,3)}</td>
+      <td class="text-right text-mono">${n(q.eth_hid,3)}</td>
+      <td class="text-right text-mono" style="color:var(--blue)"><strong>${n(q.cum_sugar,3)}</strong></td>
+      <td class="text-right text-mono"><span class="${yoyCls}">${q.yoy_q!=null?_sgn(q.yoy_q):'—'}</span></td>
     </tr>`;
   }).join('');
 
-  // ── Tabla histórico safras ──
+  // ── Tabla histórico safras ─────────────────────────
   const totals = d.season_totals || [];
   const tbody2 = document.getElementById('br-hist-tbody');
-  tbody2.innerHTML = totals.map((t,i) => {
-    const isCur = i===0;
-    const style = isCur ? 'font-weight:600;color:var(--text)' : '';
-    return `<tr style="${style}">
-      <td class="text-mono">${t.safra}${isCur?' <span style="font-size:9px;color:var(--blue);font-weight:400">actual</span>':''}</td>
-      <td class="text-right text-mono">${t.total_sugar!=null?t.total_sugar.toFixed(2):'—'}</td>
-      <td class="text-right text-mono">${t.total_cane!=null?t.total_cane.toFixed(1):'—'}</td>
-      <td class="text-right text-mono">${t.total_eth!=null?t.total_eth.toFixed(2):'—'}</td>
-      <td class="text-right text-mono">${t.avg_mix!=null?t.avg_mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono">${t.avg_atr!=null?t.avg_atr.toFixed(1):'—'}</td>
-      <td class="text-right text-mono" style="color:var(--muted)">${t.n_q}${t.complete?'':' <span style="color:var(--neut)">▲</span>'}</td>
+  tbody2.innerHTML = totals.map((t, i) => {
+    const isCur = i === 0;
+    const yoyCls = t.yoy_sugar!=null ? (t.yoy_sugar>0?'bear-text':'bull-text') : 'dim-text';
+    const n = (v, dp, suf='') => v!=null ? v.toFixed(dp)+suf : '—';
+    return `<tr style="${isCur?'background:rgba(0,212,168,0.06)':''}">
+      <td class="text-mono" style="${isCur?'font-weight:700;color:var(--bull)':''}">
+        ${t.safra}${isCur?'<span style="font-size:9px;margin-left:6px;color:var(--dim);font-weight:400">en curso</span>':''}
+      </td>
+      <td class="text-right text-mono" style="${isCur?'font-weight:700':''}">
+        ${t.complete ? n(t.total_sugar,2) : '<span style="color:var(--dim)">'+n(t.total_sugar,2)+' ▲</span>'}
+      </td>
+      <td class="text-right text-mono"><span class="${yoyCls}">${t.yoy_sugar!=null?_sgn(t.yoy_sugar):'—'}</span></td>
+      <td class="text-right text-mono">${n(t.total_cane,1)}</td>
+      <td class="text-right text-mono">${n(t.total_eth,2)}</td>
+      <td class="text-right text-mono">${n(t.avg_mix,1,'%')}</td>
+      <td class="text-right text-mono">${n(t.avg_atr,1)}</td>
     </tr>`;
   }).join('');
 }
