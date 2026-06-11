@@ -107,6 +107,46 @@ def run():
                     proj_sugar.get("point_mt"),
                     signals.get("H_bias_ice11"),
                 )
+
+            # Escribir fundamental_backdrop.json para consumo de score_today.py
+            try:
+                import json as _j, os as _oj
+                bias_v  = signals.get("H_bias_ice11") or 0.0
+                yoy_c   = signals.get("yoy_cane_pct")
+                yoy_s   = signals.get("yoy_sugar_pct")
+                safra   = signals.get("latest_safra", "?")
+                seq_n   = signals.get("latest_seq", 0)
+                proj_s  = (signals.get("F_proj") or {}).get("sugar") or {}
+                proj_pt = proj_s.get("point_mt")
+                direction = "BEARISH" if bias_v < -0.15 else ("BULLISH" if bias_v > 0.15 else "NEUTRAL")
+                summary_parts = ["safra %s seq=%d" % (safra, seq_n)]
+                if yoy_c is not None:
+                    summary_parts.append("YoY cana %+.1f%%" % yoy_c)
+                if yoy_s is not None:
+                    summary_parts.append("azucar %+.1f%%" % yoy_s)
+                if proj_pt is not None:
+                    summary_parts.append("proj azu=%.1f Mt" % proj_pt)
+                backdrop = {
+                    "updated":   t0.strftime("%Y-%m-%d %H:%M"),
+                    "direction": direction,
+                    "bias":      round(bias_v, 3),
+                    "summary":   "  |  ".join(summary_parts),
+                    "safra":     safra,
+                    "seq":       seq_n,
+                    "yoy_cane_pct":  yoy_c,
+                    "yoy_sugar_pct": yoy_s,
+                    "proj_sugar_mt": proj_pt,
+                    "cum_cane_mt":   signals.get("cum_cane_mt"),
+                    "cum_sugar_mt":  signals.get("cum_sugar_mt"),
+                }
+                bd_path = _oj.path.join(_oj.path.dirname(_oj.path.abspath(__file__)),
+                                        "..", "logs", "fundamental_backdrop.json")
+                with open(bd_path, "w", encoding="utf-8") as _fbd:
+                    _j.dump(backdrop, _fbd, ensure_ascii=False, indent=2)
+                logger.info("fundamental_backdrop.json actualizado → %s", _oj.path.abspath(bd_path))
+            except Exception as _be:
+                logger.warning("No se pudo escribir fundamental_backdrop.json: %s", _be)
+
         except Exception as e:
             logger.error("  compute_crop_progress: %s", e, exc_info=True)
 

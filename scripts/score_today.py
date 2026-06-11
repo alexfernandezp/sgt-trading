@@ -1666,24 +1666,20 @@ def run():
     print("  VWAP bias  : %s" % vwap_bias)
     if vwap_bias != "NEUTRAL" and vwap_bias != direction and direction != "NEUTRAL":
         print("  [!] VWAP bias contradice la direccion - revisar")
-    # Bias H — UNICA crop progress (informativo, no scoring)
+    # Fundamental backdrop — escrito por run_crop_progress.py (modelo independiente)
     try:
-        from services.brazil_crop_progress import compute_crop_progress as _ccp
-        _cp_bias = _ccp(session, region="CS")
-        _hbias = _cp_bias.get("H_bias_ice11")
-        if _hbias is not None:
-            _hdir = "BEARISH" if _hbias < -0.15 else ("BULLISH" if _hbias > 0.15 else "NEUTRAL")
-            _hseq = _cp_bias.get("latest_seq", "?")
-            _hsafra = _cp_bias.get("latest_safra", "?")
-            print("  UNICA bias : %+.3f [%s]  safra=%s seq=%d  (informativo)" % (
-                _hbias, _hdir, _hsafra, _hseq))
-            if _hdir != "NEUTRAL" and direction != "NEUTRAL":
-                _bias_long  = _hbias > 0.15   # BULLISH = menos oferta = sube precio = LONG
-                _trade_long = direction == "LONG"
-                if _bias_long != _trade_long:
-                    print("  [!] UNICA bias contradice direccion — oferta vs tecnico")
+        import json as _json, os as _os
+        _bd_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                                 "logs", "fundamental_backdrop.json")
+        if _os.path.exists(_bd_path):
+            _bd = _json.load(open(_bd_path, encoding="utf-8"))
+            print("  Fundamental: %-8s  %s  (modelo UNICA/Brasil, actualizado %s)" % (
+                _bd.get("direction", "?"),
+                _bd.get("summary", ""),
+                _bd.get("updated", "?"),
+            ))
     except Exception as _e:
-        logger.debug("H_bias_ice11 en decision: %s", _e)
+        logger.debug("fundamental_backdrop: %s", _e)
     if macro:
         mb    = macro.get("macro_bias", "NEUTRAL")
         ms_   = macro.get("macro_score", 0)
@@ -1866,21 +1862,21 @@ def run():
     except Exception as e:
         logger.debug("brazil_signal error: %s", e)
 
-    # Brazil Crop Progress — señales UNICA quincenal + tabla proyección
+    # Fundamental backdrop — resumen del modelo independiente Brazil Crop Progress
     try:
-        from services.brazil_crop_progress import (
-            compute_crop_progress, format_crop_progress_report, format_unica_forecast_table
-        )
-        _cp = compute_crop_progress(session, region="CS")
-        print()
-        print("  -- BRAZIL CROP PROGRESS (UNICA quincenal) --")
-        _cp_report = format_crop_progress_report(_cp)
-        for _line in _cp_report.split("\n"):
-            print("  " + _line if not _line.startswith("=") else _line)
-        _fc_table = format_unica_forecast_table(_cp)
-        print(_fc_table)
-    except Exception as _e:
-        logger.debug("brazil_crop_progress error: %s", _e)
+        import json as _json2, os as _os2
+        _bd2_path = _os2.path.join(_os2.path.dirname(_os2.path.dirname(_os2.path.abspath(__file__))),
+                                   "logs", "fundamental_backdrop.json")
+        if _os2.path.exists(_bd2_path):
+            _bd2 = _json2.load(open(_bd2_path, encoding="utf-8"))
+            print()
+            print("  -- FUNDAMENTAL BACKDROP (modelo Brazil Crop Progress) --")
+            print("  Dirección  : %s" % _bd2.get("direction", "?"))
+            print("  Bias score : %+.3f" % _bd2.get("bias", 0))
+            print("  Resumen    : %s" % _bd2.get("summary", "N/D"))
+            print("  Actualizado: %s  (correr run_crop_progress.py para refrescar)" % _bd2.get("updated", "?"))
+    except Exception as _e2:
+        logger.debug("fundamental_backdrop ctx: %s", _e2)
 
     # Flujo exportador Santos (acumulado diario → semanal → mensual)
     try:
