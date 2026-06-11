@@ -8,23 +8,23 @@
 <style>
 /* ── Variables ── */
 :root {
-  --bg:        #080c14;
-  --surface:   #0d1421;
-  --card:      #111b2e;
-  --card2:     #16213a;
-  --border:    #1c2d47;
-  --border2:   #243855;
-  --text:      #c8d4e6;
-  --dim:       #637a95;
-  --muted:     #374d66;
-  --bull:      #00d4a8;
-  --bull-bg:   rgba(0,212,168,.12);
-  --bear:      #ff5252;
-  --bear-bg:   rgba(255,82,82,.12);
-  --neut:      #f5c630;
-  --neut-bg:   rgba(245,198,48,.10);
-  --blue:      #4a9eff;
-  --blue-bg:   rgba(74,158,255,.12);
+  --bg:        #000000;
+  --surface:   #070708;
+  --card:      #0d0d0f;
+  --card2:     #111115;
+  --border:    #1e1e24;
+  --border2:   #28282e;
+  --text:      #eaedf5;
+  --dim:       #7a8090;
+  --muted:     #3a3d48;
+  --bull:      #00d97e;
+  --bull-bg:   rgba(0,217,126,.10);
+  --bear:      #ff3535;
+  --bear-bg:   rgba(255,53,53,.10);
+  --neut:      #f59e0b;
+  --neut-bg:   rgba(245,158,11,.09);
+  --blue:      #4d9fff;
+  --blue-bg:   rgba(77,159,255,.10);
   --purple:    #a78bfa;
   --font:      'Segoe UI', system-ui, sans-serif;
   --mono:      'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
@@ -78,16 +78,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
 /* ── KPI Cards ── */
 .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-.kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+.kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 0;
             padding: 14px 16px; }
 .kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase;
              letter-spacing: .8px; margin-bottom: 6px; }
 .kpi-value { font-size: 22px; font-family: var(--mono); font-weight: 600; line-height: 1.1; }
 .kpi-sub { font-size: 11px; color: var(--dim); margin-top: 4px; }
-.kpi-card.bull { border-color: rgba(0,212,168,.3); background: linear-gradient(135deg, var(--card), var(--bull-bg)); }
-.kpi-card.bear { border-color: rgba(255,82,82,.3); background: linear-gradient(135deg, var(--card), var(--bear-bg)); }
-.kpi-card.neut { border-color: rgba(245,198,48,.3); background: linear-gradient(135deg, var(--card), var(--neut-bg)); }
-.kpi-card.blue { border-color: rgba(74,158,255,.3); background: linear-gradient(135deg, var(--card), var(--blue-bg)); }
+.kpi-card.bull { border-left: 3px solid var(--bull);  background: linear-gradient(135deg, var(--card), var(--bull-bg)); }
+.kpi-card.bear { border-left: 3px solid var(--bear);  background: linear-gradient(135deg, var(--card), var(--bear-bg)); }
+.kpi-card.neut { border-left: 3px solid var(--neut);  background: linear-gradient(135deg, var(--card), var(--neut-bg)); }
+.kpi-card.blue { border-left: 3px solid var(--blue);  background: linear-gradient(135deg, var(--card), var(--blue-bg)); }
 .bull-text { color: var(--bull); }
 .bear-text { color: var(--bear); }
 .neut-text { color: var(--neut); }
@@ -97,7 +97,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 /* ── Two-column grid ── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
 .grid-3 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 18px; }
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 0; padding: 16px; }
 .card-title { font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase;
               letter-spacing: 1px; margin-bottom: 12px; }
 .chart-wrap { position: relative; height: 220px; }
@@ -293,143 +293,167 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 </div>
 
 <!-- ====================================================
-     TAB 2: BRAZIL / UNICA
+     TAB 2: BRAZIL / UNICA  — Bloomberg Terminal Style
 ===================================================== -->
 <div id="tab-brazil" class="tab-panel">
 
-  <!-- ── Top info bar ───────────────────────────────── -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+  <!-- ── Terminal header strip ── -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding:10px 16px;background:var(--surface);border:1px solid var(--border)">
     <div>
-      <div style="font-size:15px;font-weight:700;color:var(--text);letter-spacing:.3px">Centro-Sul · Acompanhamento Quinzenal</div>
-      <div style="font-size:12px;color:var(--dim);margin-top:3px" id="br-subline">UNICA · cargando…</div>
+      <div style="font-size:11px;font-family:var(--mono);color:var(--neut);letter-spacing:2.5px;text-transform:uppercase">BRAZIL · CENTRO-SUL · UNICA BIWEEKLY</div>
+      <div style="font-size:12px;color:var(--dim);margin-top:4px;font-family:var(--mono)" id="br-subline">Loading…</div>
     </div>
-    <div id="br-proj-block" style="text-align:right;display:none">
-      <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Proyección CS</div>
-      <div style="font-size:18px;font-weight:700;font-family:var(--mono)" id="br-proj-val">—</div>
-      <div style="font-size:10px;margin-top:1px" id="br-proj-caveat"></div>
+    <div style="text-align:right">
+      <div style="font-size:9px;font-family:var(--mono);color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">CS 10-Season Historical Range</div>
+      <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--text);margin-top:2px" id="br-hist-range">—</div>
+      <div style="font-size:10px;font-family:var(--mono);color:var(--dim);margin-top:1px" id="br-hist-med">median: —</div>
     </div>
   </div>
 
-  <!-- ── KPI 4 cards ────────────────────────────────── -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+  <!-- ── KPI 4 cards ── -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
 
-    <div class="kpi-card blue">
-      <div class="kpi-label">Azúcar CS acum.</div>
+    <div class="kpi-card" style="border-left:3px solid var(--blue)">
+      <div class="kpi-label">Accumulated Sugar CS</div>
       <div class="kpi-value blue-text" id="br-cum-sugar">—</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
-        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:10px;color:var(--dim);font-family:var(--mono)">YoY vs prev season</span>
         <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-sugar-badge">—</span>
       </div>
     </div>
 
-    <div class="kpi-card">
-      <div class="kpi-label">Caña CS acum.</div>
+    <div class="kpi-card" style="border-left:3px solid var(--muted)">
+      <div class="kpi-label">Accumulated Cane CS</div>
       <div class="kpi-value" id="br-cum-cane">—</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
-        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:10px;color:var(--dim);font-family:var(--mono)">YoY vs prev season</span>
         <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-cane-badge">—</span>
       </div>
     </div>
 
-    <div class="kpi-card" id="br-kpi-mix">
-      <div class="kpi-label">Mix Azúcar %</div>
+    <div class="kpi-card" style="border-left:3px solid var(--neut)">
+      <div class="kpi-label">Sugar Mix % (last period)</div>
       <div class="kpi-value" id="br-mix">—</div>
-      <div style="font-size:11px;color:var(--dim);margin-top:5px">última quincena · <span id="br-atr-inline" style="font-family:var(--mono)"></span> ATR</div>
+      <div style="font-size:10px;color:var(--dim);margin-top:6px;font-family:var(--mono)">ATR: <span id="br-atr-inline" style="color:var(--text)">—</span> kg/t</div>
     </div>
 
-    <div class="kpi-card">
-      <div class="kpi-label">Etanol Total acum.</div>
+    <div class="kpi-card" style="border-left:3px solid var(--muted)">
+      <div class="kpi-label">Accumulated Ethanol CS</div>
       <div class="kpi-value" id="br-cum-eth">—</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px">
-        <span style="font-size:11px;color:var(--dim)">vs safra ant.</span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <span style="font-size:10px;color:var(--dim);font-family:var(--mono)">YoY vs prev season</span>
         <span style="font-size:12px;font-family:var(--mono);font-weight:600" id="br-yoy-eth-badge">—</span>
       </div>
     </div>
   </div>
 
-  <!-- ── Hero chart: azúcar acumulada + rango histórico ── -->
+  <!-- ── Hero chart: accumulated sugar + band ── -->
   <div class="card mb-16">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <div class="card-title" style="margin-bottom:0">Azúcar CS Acumulada (Mt) · Rango histórico 10 safras</div>
-      <div style="display:flex;gap:16px;font-size:11px;align-items:center">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px">Accumulated Sugar CS (Mt) · 10-Season Historical Band</div>
+      <div style="display:flex;gap:18px;font-size:10px;align-items:center;font-family:var(--mono)">
         <span style="display:flex;align-items:center;gap:5px">
-          <span style="width:20px;height:3px;background:var(--bull);display:inline-block;border-radius:2px"></span>
+          <span style="width:20px;height:3px;background:var(--bull);display:inline-block"></span>
           <span id="br-legend-cur" style="color:var(--dim)">—</span>
         </span>
         <span style="display:flex;align-items:center;gap:5px">
-          <span style="width:20px;height:2px;background:var(--blue);display:inline-block;border-radius:2px"></span>
+          <span style="width:20px;height:2px;background:var(--blue);display:inline-block;opacity:.6"></span>
           <span id="br-legend-prev" style="color:var(--dim)">—</span>
         </span>
         <span style="display:flex;align-items:center;gap:5px">
-          <span style="width:20px;height:8px;background:rgba(74,158,255,0.12);display:inline-block;border-radius:2px;border:1px solid rgba(74,158,255,0.25)"></span>
-          <span style="color:var(--dim)">Rango p25-p75</span>
+          <span style="width:20px;height:9px;background:rgba(77,159,255,0.12);border:1px solid rgba(77,159,255,0.3);display:inline-block"></span>
+          <span style="color:var(--dim)">P25–P75</span>
         </span>
       </div>
     </div>
     <div style="position:relative;height:300px"><canvas id="chart-br-main"></canvas></div>
   </div>
 
-  <!-- ── Fila 2: Mix% + ATR (solo current vs prev) ─── -->
+  <!-- ── Row 2: Mix% + ATR biweekly ── -->
   <div class="grid-2">
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="card-title" style="margin-bottom:0">Mix Azúcar % · Quinzenal</div>
-        <span style="font-size:10px;color:var(--muted)" id="br-mix-legend"></span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px">Sugar Mix % · Biweekly</div>
+        <span style="font-size:9px;color:var(--muted);font-family:var(--mono)" id="br-mix-legend"></span>
       </div>
       <div style="position:relative;height:200px"><canvas id="chart-br-mix"></canvas></div>
     </div>
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-        <div class="card-title" style="margin-bottom:0">ATR kg/t · Quinzenal</div>
-        <span style="font-size:10px;color:var(--muted)" id="br-atr-legend"></span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px">ATR kg/t · Biweekly</div>
+        <span style="font-size:9px;color:var(--muted);font-family:var(--mono)" id="br-atr-legend"></span>
       </div>
       <div style="position:relative;height:200px"><canvas id="chart-br-atr"></canvas></div>
     </div>
   </div>
 
-  <!-- ── Fila 3: Etanol quinzenal (anidro + hidratado) ── -->
+  <!-- ── Row 3: Annual avg Mix% + Annual avg ATR bars ── -->
+  <div class="grid-2">
+    <div class="card">
+      <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px">Annual Avg Sugar Mix % · Per Season</div>
+      <div style="position:relative;height:155px"><canvas id="chart-br-annmix"></canvas></div>
+    </div>
+    <div class="card">
+      <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px">Annual Avg ATR kg/t · Per Season</div>
+      <div style="position:relative;height:155px"><canvas id="chart-br-annatr"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Ethanol biweekly stacked ── -->
   <div class="card mb-16">
-    <div class="card-title">Etanol CS Quinzenal (Mm³) · Anidro + Hidratado</div>
+    <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px">Ethanol CS Biweekly (Mm³) · Anhydrous + Hydrous</div>
     <div style="position:relative;height:200px"><canvas id="chart-br-eth"></canvas></div>
   </div>
 
-  <!-- ── Tabla quincenal detallada ────────────────────── -->
+  <!-- ── Side-by-side comparison table Q1-Q24 ── -->
   <div class="card mb-16">
-    <div class="card-title" id="br-detail-title">Detalle quincenal · safra actual</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px" id="br-cmp-title">Biweekly Season Comparison</div>
+      <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">Cane &amp; Sugar in Mt · Mix in % · ATR in kg/t</div>
+    </div>
     <div style="overflow-x:auto">
       <table class="data-table w-full" style="font-size:12px">
         <thead>
+          <tr id="br-cmp-thead-season" style="border-bottom:none">
+            <!-- season labels injected by JS -->
+          </tr>
           <tr>
             <th style="width:30px">Q</th>
-            <th>Fecha</th>
-            <th class="text-right">Caña (Mt)</th>
-            <th class="text-right">Azúcar (Mt)</th>
-            <th class="text-right">Mix %</th>
-            <th class="text-right">ATR kg/t</th>
-            <th class="text-right">Eth. An. Mm³</th>
-            <th class="text-right">Eth. Hid. Mm³</th>
-            <th class="text-right">Acum. Azúcar</th>
-            <th class="text-right">YoY vs Q-ant</th>
+            <th class="text-right" style="color:var(--dim);font-size:10px">Date</th>
+            <th class="text-right" style="color:var(--dim);font-size:10px">Cane</th>
+            <th class="text-right" style="color:var(--dim);font-size:10px">Sugar</th>
+            <th class="text-right" style="color:var(--dim);font-size:10px">Mix%</th>
+            <th class="text-right" style="color:var(--dim);font-size:10px">ATR</th>
+            <th style="width:4px;padding:0"></th>
+            <th class="text-right" style="color:var(--neut);font-size:10px">Date</th>
+            <th class="text-right" style="color:var(--neut);font-size:10px">Cane</th>
+            <th class="text-right" style="color:var(--neut);font-size:10px">Sugar</th>
+            <th class="text-right" style="color:var(--neut);font-size:10px">Mix%</th>
+            <th class="text-right" style="color:var(--neut);font-size:10px">ATR</th>
+            <th class="text-right" style="font-size:10px">ΔSugar</th>
+            <th class="text-right" style="font-size:10px">ΔMix</th>
+            <th class="text-right" style="font-size:10px">ΔATR</th>
           </tr>
         </thead>
-        <tbody id="br-detail-tbody"></tbody>
+        <tbody id="br-cmp-tbody"></tbody>
       </table>
     </div>
   </div>
 
-  <!-- ── Tabla histórico safras ────────────────────────── -->
+  <!-- ── Historical season totals ── -->
   <div class="card">
-    <div class="card-title">Histórico Centro-Sul · Producción anual</div>
+    <div style="font-size:10px;font-family:var(--mono);font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:12px">Centro-Sul · Annual Production History</div>
     <table class="data-table w-full" style="font-size:12px">
       <thead>
         <tr>
-          <th>Safra</th>
-          <th class="text-right">Azúcar (Mt)</th>
+          <th>Season</th>
+          <th class="text-right">Sugar (Mt)</th>
           <th class="text-right">YoY</th>
-          <th class="text-right">Caña (Mt)</th>
-          <th class="text-right">Etanol (Mm³)</th>
-          <th class="text-right">Mix % prom</th>
-          <th class="text-right">ATR prom</th>
+          <th class="text-right">Cane (Mt)</th>
+          <th class="text-right">Ethanol (Mm³)</th>
+          <th class="text-right">Avg Mix %</th>
+          <th class="text-right">Avg ATR</th>
+          <th style="width:80px">Status</th>
         </tr>
       </thead>
       <tbody id="br-hist-tbody"></tbody>
@@ -660,20 +684,28 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <!-- ── JavaScript ── -->
 <script>
 const COLORS = {
-  bull:'#00d4a8', bear:'#ff5252', neut:'#f5c630',
-  blue:'#4a9eff', purple:'#a78bfa', dim:'#637a95',
-  border:'#1c2d47', bg:'#111b2e', text:'#c8d4e6',
+  bull:'#00d97e', bear:'#ff3535', neut:'#f59e0b',
+  blue:'#4d9fff', purple:'#a78bfa', dim:'#7a8090',
+  border:'#1e1e24', bg:'#0d0d0f', text:'#eaedf5',
+  amber:'#f59e0b',
 };
+const MONO_FONT = "'Cascadia Code','JetBrains Mono','Consolas',monospace";
 const CHART_DEFAULTS = {
   responsive:true, maintainAspectRatio:false,
-  plugins:{ legend:{ labels:{ color:COLORS.dim, font:{size:11} } },
-            tooltip:{ backgroundColor:'#1a2740', titleColor:COLORS.text,
-                      bodyColor:COLORS.dim, borderColor:COLORS.border, borderWidth:1 }},
+  interaction:{ mode:'index', intersect:false },
+  plugins:{
+    legend:{ labels:{ color:'#5a6070', font:{size:11, family:MONO_FONT}, boxWidth:14 } },
+    tooltip:{ backgroundColor:'#111', titleColor:'#eaedf5', bodyColor:'#7a8090',
+              borderColor:'#252530', borderWidth:1, padding:10,
+              titleFont:{size:12,weight:'600'}, bodyFont:{size:11} },
+  },
   scales:{
-    x:{ ticks:{ color:COLORS.dim, font:{size:10}, maxTicksLimit:8 },
-        grid:{ color:'rgba(28,45,71,.4)', drawBorder:false }},
-    y:{ ticks:{ color:COLORS.dim, font:{size:10} },
-        grid:{ color:'rgba(28,45,71,.4)', drawBorder:false }},
+    x:{ ticks:{ color:'#4a4f5e', font:{size:11,family:MONO_FONT}, maxTicksLimit:8 },
+        grid:{ color:'rgba(255,255,255,0.025)', drawBorder:false },
+        border:{ color:'#1e1e24' } },
+    y:{ ticks:{ color:'#4a4f5e', font:{size:11,family:MONO_FONT} },
+        grid:{ color:'rgba(255,255,255,0.025)', drawBorder:false },
+        border:{ color:'#1e1e24' } },
   },
 };
 
@@ -790,14 +822,14 @@ function _sgnEl(el, v, bearIfPositive) {
 const BR_OPTS = (yLabel) => ({
   ...CHART_DEFAULTS,
   plugins: {
-    legend: { labels: { color:COLORS.dim, font:{size:10}, boxWidth:12,
+    legend: { labels: { color:'#5a6070', font:{size:11,family:MONO_FONT}, boxWidth:14,
       filter: item => !item.text.startsWith('_') } },
     tooltip: { ...CHART_DEFAULTS.plugins.tooltip,
-      callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y!=null?ctx.parsed.y.toFixed(2):'—'}` } }
+      callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y!=null?ctx.parsed.y.toFixed(3):'—'}` } }
   },
   scales: {
     x: { ...CHART_DEFAULTS.scales.x },
-    y: { ...CHART_DEFAULTS.scales.y, title:{display:true,text:yLabel,color:COLORS.dim,font:{size:10}} }
+    y: { ...CHART_DEFAULTS.scales.y, title:{display:!!yLabel,text:yLabel,color:'#555',font:{size:11}} }
   }
 });
 
@@ -805,192 +837,217 @@ async function loadBrazil() {
   const d = await fetch('/api/unica').then(r=>r.json());
   const sm = d.summary || {};
   const Q_LABELS = Array.from({length:24}, (_,i) => `Q${i+1}`);
-  const cur = sm.safra || '—';
-  const prev = d.prev_safra || '—';
+  const cur  = sm.safra      || '—';
+  const prev = d.prev_safra  || '—';
+  const _n   = (v, dp, suf='') => v!=null ? v.toFixed(dp)+suf : '—';
 
-  // ── Info bar ──────────────────────────────────────
+  // ── Info bar ──────────────────────────────────────────────────────────────
   document.getElementById('br-subline').textContent =
-    `UNICA · Safra ${cur} · Q${sm.q_num||'?'} de 24 · ${sm.q_date||'—'}`;
+    `UNICA · Season ${cur} · Period Q${sm.q_num||'?'} / 24 · Last: ${sm.q_date||'—'}`;
 
-  // Proyección
-  if (sm.proj_sugar != null) {
-    document.getElementById('br-proj-block').style.display = 'block';
-    const el = document.getElementById('br-proj-val');
-    el.textContent = sm.proj_sugar.toFixed(1) + ' Mt';
-    el.style.color = sm.proj_reliable ? 'var(--text)' : 'var(--neut)';
-    const cav = document.getElementById('br-proj-caveat');
-    cav.textContent = sm.proj_reliable
-      ? `vs ${sm.n_proj_hist} safras hist.`
-      : `⚠ prematuro (Q${sm.q_num} / 24)`;
-    cav.style.color = sm.proj_reliable ? 'var(--dim)' : 'var(--neut)';
+  // Historical range (replaces bogus pace projection)
+  if (d.hist_season_min != null) {
+    document.getElementById('br-hist-range').textContent =
+      `${d.hist_season_min} – ${d.hist_season_max} Mt`;
+    document.getElementById('br-hist-med').textContent =
+      `median: ${d.hist_season_med} Mt`;
   }
 
-  // ── KPI cards ─────────────────────────────────────
+  // ── KPI cards ──────────────────────────────────────────────────────────────
   document.getElementById('br-cum-sugar').textContent =
     sm.cum_sugar!=null ? sm.cum_sugar.toFixed(3)+' Mt' : '—';
-  document.getElementById('br-cum-sugar').className = 'kpi-value blue-text';
-
   document.getElementById('br-cum-cane').textContent =
     sm.cum_cane!=null ? sm.cum_cane.toFixed(1)+' Mt' : '—';
-
   document.getElementById('br-cum-eth').textContent =
     sm.cum_eth!=null ? sm.cum_eth.toFixed(3)+' Mm³' : '—';
-
-  // YoY badges: positivo = más producción = BEARISH para precio
   _sgnEl(document.getElementById('br-yoy-sugar-badge'), sm.yoy_sugar, true);
   _sgnEl(document.getElementById('br-yoy-cane-badge'),  sm.yoy_cane,  true);
   _sgnEl(document.getElementById('br-yoy-eth-badge'),   sm.yoy_eth,   true);
-
-  // Mix + ATR en misma card
   const mix = sm.mix;
   document.getElementById('br-mix').textContent = mix!=null ? mix.toFixed(1)+'%' : '—';
   document.getElementById('br-mix').className = 'kpi-value ' +
-    (mix>50?'bear-text' : mix>42?'neut-text' : 'bull-text');
+    (mix!=null ? (mix>50?'bear-text':mix>42?'neut-text':'bull-text') : '');
   document.getElementById('br-mix-legend').textContent = `${cur} vs ${prev}`;
   document.getElementById('br-atr-legend').textContent  = `${cur} vs ${prev}`;
-  document.getElementById('br-atr-inline').textContent = sm.atr!=null ? sm.atr.toFixed(1) : '—';
+  document.getElementById('br-atr-inline').textContent  = sm.atr!=null ? sm.atr.toFixed(1) : '—';
 
-  // ── HERO CHART: rango histórico + 2 líneas ────────
+  // ── Kill existing charts ───────────────────────────────────────────────────
   _brKill();
-  const cumCur  = d.cum_sugar_cur  || [];
-  const cumPrev = d.cum_sugar_prev || [];
-  const p25  = d.hist_p25  || [];
-  const avg  = d.hist_avg  || [];
-  const p75  = d.hist_p75  || [];
-
-  _brCharts.main = new Chart(document.getElementById('chart-br-main'), {
-    type:'line',
-    data: { labels: Q_LABELS, datasets: [
-      // Banda: p25 bottom → fill to p75 (dataset +1)
-      { label: '_p25', data: p25,
-        borderColor: 'transparent', backgroundColor: 'rgba(74,158,255,0.10)',
-        fill: '+1', pointRadius: 0, tension:.4 },
-      // p75 top of band
-      { label: '_p75', data: p75,
-        borderColor: 'rgba(74,158,255,0.20)', borderWidth: 1,
-        backgroundColor: 'transparent', fill: false,
-        pointRadius: 0, tension:.4, borderDash:[3,3] },
-      // Promedio histórico
-      { label: 'Prom. 10 safras', data: avg,
-        borderColor: 'rgba(74,158,255,0.5)', borderWidth: 1.5,
-        borderDash:[6,4], pointRadius: 0, tension:.4 },
-      // Safra anterior
-      { label: prev, data: cumPrev,
-        borderColor: COLORS.blue, borderWidth: 2,
-        pointRadius: 0, tension:.4 },
-      // Safra actual — siempre al frente
-      { label: cur, data: cumCur,
-        borderColor: COLORS.bull, borderWidth: 3,
-        pointRadius: cumCur.filter(v=>v!=null).length > 0 ? 5 : 0,
-        pointBackgroundColor: COLORS.bull,
-        tension:.4 },
-    ]},
-    options: { ...BR_OPTS('Mt azúcar acumulada'),
-      plugins: { ...BR_OPTS('').plugins,
-        legend: { labels: { color:COLORS.dim, font:{size:10}, boxWidth:14,
-          filter: item => !item.text.startsWith('_') }}
-      }
-    },
-  });
   document.getElementById('br-legend-cur').textContent  = cur;
   document.getElementById('br-legend-prev').textContent = prev;
 
-  // ── Mix % ─────────────────────────────────────────
+  // ── HERO: Accumulated Sugar + P25-P75 band ────────────────────────────────
+  const cumCur  = d.cum_sugar_cur  || [];
+  const cumPrev = d.cum_sugar_prev || [];
+  const p25 = d.hist_p25 || [], avg = d.hist_avg || [], p75 = d.hist_p75 || [];
+
+  _brCharts.main = new Chart(document.getElementById('chart-br-main'), {
+    type:'line',
+    data:{ labels:Q_LABELS, datasets:[
+      { label:'_p25', data:p25, borderColor:'transparent',
+        backgroundColor:'rgba(77,159,255,0.10)', fill:'+1', pointRadius:0, tension:.35 },
+      { label:'_p75', data:p75, borderColor:'rgba(77,159,255,0.22)', borderWidth:1,
+        backgroundColor:'transparent', fill:false, pointRadius:0, tension:.35, borderDash:[3,3] },
+      { label:'10-yr avg', data:avg, borderColor:'rgba(77,159,255,0.40)', borderWidth:1.5,
+        borderDash:[6,4], pointRadius:0, tension:.35 },
+      { label:prev, data:cumPrev, borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
+        pointRadius:0, tension:.35, borderDash:[5,3] },
+      { label:cur, data:cumCur, borderColor:COLORS.bull, borderWidth:3,
+        pointRadius: cumCur.filter(v=>v!=null).length > 0 ? 4 : 0,
+        pointBackgroundColor:COLORS.bull, tension:.35 },
+    ]},
+    options:{
+      ...BR_OPTS('Mt'),
+      plugins:{ ...BR_OPTS('').plugins,
+        legend:{ labels:{ color:'#5a6070', font:{size:11,family:MONO_FONT}, boxWidth:14,
+          filter: item => !item.text.startsWith('_') }}},
+    },
+  });
+
+  // ── Sugar Mix% biweekly ───────────────────────────────────────────────────
+  const curMix = d.cur_mix || [];
   _brCharts.mix = new Chart(document.getElementById('chart-br-mix'), {
-    type: 'line',
-    data: { labels: Q_LABELS, datasets: [
-      { label: prev, data: d.prev_mix || [],
-        borderColor: COLORS.dim, borderWidth: 1.5,
-        pointRadius: 0, tension:.35, borderDash:[5,3] },
-      { label: cur, data: d.cur_mix || [],
-        borderColor: COLORS.bull, borderWidth: 2.5,
-        pointRadius: d.cur_mix.filter(v=>v!=null).length <= 4 ? 5 : 0,
-        tension:.35 },
+    type:'line',
+    data:{ labels:Q_LABELS, datasets:[
+      { label:prev, data:d.prev_mix||[], borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
+        pointRadius:0, tension:.3, borderDash:[5,3] },
+      { label:cur,  data:curMix, borderColor:COLORS.bull, borderWidth:2.5,
+        pointRadius: curMix.filter(v=>v!=null).length<=4 ? 5 : 0,
+        pointBackgroundColor:COLORS.bull, tension:.3 },
     ]},
-    options: { ...BR_OPTS('Mix azúcar %'),
-      scales: { ...BR_OPTS('').scales,
-        y: { ...CHART_DEFAULTS.scales.y, min:0, max:65,
-             title:{display:true,text:'Mix azúcar %',color:COLORS.dim,font:{size:10}} }}
-    },
+    options:{...BR_OPTS('%'),
+      scales:{...BR_OPTS('').scales, y:{...CHART_DEFAULTS.scales.y, min:0, max:65,
+        title:{display:true,text:'%',color:'#555',font:{size:11}}}}},
   });
 
-  // ── ATR ───────────────────────────────────────────
+  // ── ATR biweekly ──────────────────────────────────────────────────────────
+  const curAtr = d.cur_atr || [];
   _brCharts.atr = new Chart(document.getElementById('chart-br-atr'), {
-    type: 'line',
-    data: { labels: Q_LABELS, datasets: [
-      { label: prev, data: d.prev_atr || [],
-        borderColor: COLORS.dim, borderWidth: 1.5,
-        pointRadius: 0, tension:.35, borderDash:[5,3] },
-      { label: cur, data: d.cur_atr || [],
-        borderColor: COLORS.neut, borderWidth: 2.5,
-        pointRadius: d.cur_atr.filter(v=>v!=null).length <= 4 ? 5 : 0,
-        tension:.35 },
+    type:'line',
+    data:{ labels:Q_LABELS, datasets:[
+      { label:prev, data:d.prev_atr||[], borderColor:'rgba(122,128,144,0.55)', borderWidth:1.5,
+        pointRadius:0, tension:.3, borderDash:[5,3] },
+      { label:cur,  data:curAtr, borderColor:COLORS.amber, borderWidth:2.5,
+        pointRadius: curAtr.filter(v=>v!=null).length<=4 ? 5 : 0,
+        pointBackgroundColor:COLORS.amber, tension:.3 },
     ]},
-    options: BR_OPTS('ATR kg/t'),
+    options:BR_OPTS('kg/t'),
   });
 
-  // ── Etanol quinzenal stacked ──────────────────────
-  _brCharts.eth = new Chart(document.getElementById('chart-br-eth'), {
-    type: 'bar',
-    data: { labels: Q_LABELS, datasets: [
-      { label: `Anidro ${prev}`,   data: d.prev_eth_an  || [], backgroundColor:'rgba(74,158,255,0.3)',  stack:'prev' },
-      { label: `Hidratado ${prev}`,data: d.prev_eth_hid || [], backgroundColor:'rgba(74,158,255,0.15)', stack:'prev' },
-      { label: `Anidro ${cur}`,    data: d.cur_eth_an   || [], backgroundColor:'rgba(0,212,168,0.5)',   stack:'cur' },
-      { label: `Hidratado ${cur}`, data: d.cur_eth_hid  || [], backgroundColor:'rgba(0,212,168,0.25)',  stack:'cur' },
-    ]},
-    options: { ...BR_OPTS('Etanol quinzenal Mm³'),
-      plugins: { ...BR_OPTS('').plugins,
-        legend:{labels:{color:COLORS.dim,font:{size:10},boxWidth:10}}},
-      scales: { ...BR_OPTS('').scales,
-        x: { ...CHART_DEFAULTS.scales.x, stacked:true },
-        y: { ...CHART_DEFAULTS.scales.y, stacked:true,
-             title:{display:true,text:'Mm³',color:COLORS.dim,font:{size:10}}}},
+  // ── Annual avg Mix% bar chart ─────────────────────────────────────────────
+  const totals   = d.season_totals || [];
+  const annRev   = [...totals].reverse();  // oldest → newest
+  const annLabels = annRev.map(t => String(t.safra).replace('/','/'));
+  const annMix    = annRev.map(t => t.avg_mix);
+  const annAtr    = annRev.map(t => t.avg_atr);
+  const annMixBg  = annRev.map(t => t.safra === cur ? 'rgba(245,158,11,0.85)' : 'rgba(77,159,255,0.38)');
+  const annAtrBg  = annRev.map(t => t.safra === cur ? 'rgba(245,158,11,0.85)' : 'rgba(122,128,144,0.38)');
+  const annOpts = (yLabel, max) => ({
+    ...CHART_DEFAULTS,
+    plugins:{...CHART_DEFAULTS.plugins, legend:{display:false}},
+    scales:{
+      x:{...CHART_DEFAULTS.scales.x, ticks:{color:'#3e4250',font:{size:9,family:MONO_FONT},maxRotation:45}},
+      y:{...CHART_DEFAULTS.scales.y, min:0, max:max||undefined,
+         title:{display:true,text:yLabel,color:'#555',font:{size:10}}},
     },
   });
 
-  // ── Tabla quincenal detallada ──────────────────────
-  const detail = d.cur_detail || [];
-  document.getElementById('br-detail-title').textContent =
-    `Detalle quincenal · ${cur} (con comparativa vs ${prev})`;
-  const tbody1 = document.getElementById('br-detail-tbody');
-  tbody1.innerHTML = detail.map((q, idx) => {
-    const isLast = idx === detail.length - 1;
-    const bg = isLast ? 'background:rgba(0,212,168,0.05)' : '';
-    const yoyCls = q.yoy_q!=null ? (q.yoy_q<0?'bull-text':'bear-text') : 'ret-na';
-    const n = (v, dp) => v!=null ? v.toFixed(dp) : '—';
-    return `<tr style="${bg}">
-      <td class="text-mono" style="color:var(--dim)">${q.q}</td>
-      <td class="text-mono">${q.date||'—'}</td>
-      <td class="text-right text-mono">${n(q.cane,3)}</td>
-      <td class="text-right text-mono"><strong>${n(q.sugar,3)}</strong></td>
-      <td class="text-right text-mono">${q.mix!=null?q.mix.toFixed(1)+'%':'—'}</td>
-      <td class="text-right text-mono">${n(q.atr,1)}</td>
-      <td class="text-right text-mono">${n(q.eth_an,3)}</td>
-      <td class="text-right text-mono">${n(q.eth_hid,3)}</td>
-      <td class="text-right text-mono" style="color:var(--blue)"><strong>${n(q.cum_sugar,3)}</strong></td>
-      <td class="text-right text-mono"><span class="${yoyCls}">${q.yoy_q!=null?_sgn(q.yoy_q):'—'}</span></td>
+  _brCharts.annmix = new Chart(document.getElementById('chart-br-annmix'), {
+    type:'bar',
+    data:{ labels:annLabels, datasets:[{ label:'Avg Mix %', data:annMix,
+      backgroundColor:annMixBg, borderWidth:0 }]},
+    options:annOpts('%', 65),
+  });
+  _brCharts.annatr = new Chart(document.getElementById('chart-br-annatr'), {
+    type:'bar',
+    data:{ labels:annLabels, datasets:[{ label:'Avg ATR kg/t', data:annAtr,
+      backgroundColor:annAtrBg, borderWidth:0 }]},
+    options:annOpts('kg/t', null),
+  });
+
+  // ── Ethanol biweekly stacked ──────────────────────────────────────────────
+  _brCharts.eth = new Chart(document.getElementById('chart-br-eth'), {
+    type:'bar',
+    data:{ labels:Q_LABELS, datasets:[
+      { label:`Anhydrous ${prev}`, data:d.prev_eth_an||[],  backgroundColor:'rgba(77,159,255,0.22)', stack:'prev' },
+      { label:`Hydrous ${prev}`,   data:d.prev_eth_hid||[], backgroundColor:'rgba(77,159,255,0.10)', stack:'prev' },
+      { label:`Anhydrous ${cur}`,  data:d.cur_eth_an||[],   backgroundColor:'rgba(0,217,126,0.55)',  stack:'cur' },
+      { label:`Hydrous ${cur}`,    data:d.cur_eth_hid||[],  backgroundColor:'rgba(0,217,126,0.22)',  stack:'cur' },
+    ]},
+    options:{...BR_OPTS('Mm³'),
+      plugins:{...BR_OPTS('').plugins, legend:{labels:{color:'#5a6070',font:{size:10,family:MONO_FONT},boxWidth:10}}},
+      scales:{...BR_OPTS('').scales,
+        x:{...CHART_DEFAULTS.scales.x, stacked:true},
+        y:{...CHART_DEFAULTS.scales.y, stacked:true, title:{display:true,text:'Mm³',color:'#555',font:{size:11}}}},
+    },
+  });
+
+  // ── Comparison table Q1-Q24 ───────────────────────────────────────────────
+  document.getElementById('br-cmp-title').textContent =
+    `Biweekly Comparison — ${prev}  vs  ${cur}`;
+  // Season header row
+  document.getElementById('br-cmp-thead-season').innerHTML = `
+    <th style="width:30px;border:none"></th>
+    <th colspan="5" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--dim);
+        border-bottom:2px solid var(--border2);padding-bottom:5px;letter-spacing:1px">${prev}</th>
+    <th style="width:4px;border:none;padding:0"></th>
+    <th colspan="5" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--neut);
+        border-bottom:2px solid var(--neut);padding-bottom:5px;letter-spacing:1px">${cur}</th>
+    <th colspan="3" style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--text);
+        border-bottom:2px solid var(--border2);padding-bottom:5px;letter-spacing:1px">Change</th>
+  `;
+
+  const cmpRows = d.comparison_rows || [];
+  const deltaCell = (v, type) => {
+    if (v == null) return `<td class="text-right text-mono" style="color:var(--muted)">—</td>`;
+    const isBull = v < 0;  // less sugar / lower mix/atr = bearish supply → bull for price
+    const cls = v > 0 ? 'bear-text' : v < 0 ? 'bull-text' : '';
+    const suf = type==='mix' ? 'pp' : type==='sugar' ? '%' : '';
+    return `<td class="text-right text-mono ${cls}">${v>=0?'+':''}${v.toFixed(1)}${suf}</td>`;
+  };
+  document.getElementById('br-cmp-tbody').innerHTML = cmpRows.map(r => {
+    const hasCur = r.has_cur;
+    const rowBg  = hasCur ? 'background:rgba(245,158,11,0.04)' : '';
+    const fd = (s) => s ? String(s).substring(5,10) : '—';  // "MM-DD"
+    const prevSt = 'color:var(--dim)';
+    const curSt  = hasCur ? 'color:var(--text);font-weight:600' : 'color:var(--muted)';
+    return `<tr style="${rowBg}">
+      <td class="text-mono" style="color:var(--dim);font-size:11px">Q${r.q}</td>
+      <td class="text-right text-mono" style="${prevSt};font-size:11px">${fd(r.prev_date)}</td>
+      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_cane,3)}</td>
+      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_sugar,3)}</td>
+      <td class="text-right text-mono" style="${prevSt}">${r.prev_mix!=null?r.prev_mix.toFixed(1)+'%':'—'}</td>
+      <td class="text-right text-mono" style="${prevSt}">${_n(r.prev_atr,1)}</td>
+      <td style="background:var(--border);width:1px;padding:0"></td>
+      <td class="text-right text-mono" style="${curSt};font-size:11px">${fd(r.cur_date)}</td>
+      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_cane,3)}</td>
+      <td class="text-right text-mono" style="${curSt}">${_n(r.cur_sugar,3)}</td>
+      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${r.cur_mix!=null?r.cur_mix.toFixed(1)+'%':'—'}</td>
+      <td class="text-right text-mono" style="${hasCur?'color:var(--text)':'color:var(--muted)'}">${_n(r.cur_atr,1)}</td>
+      ${deltaCell(r.d_sugar,'sugar')}${deltaCell(r.d_mix,'mix')}${deltaCell(r.d_atr,'atr')}
     </tr>`;
   }).join('');
 
-  // ── Tabla histórico safras ─────────────────────────
-  const totals = d.season_totals || [];
-  const tbody2 = document.getElementById('br-hist-tbody');
-  tbody2.innerHTML = totals.map((t, i) => {
-    const isCur = i === 0;
+  // ── Historical season totals ──────────────────────────────────────────────
+  document.getElementById('br-hist-tbody').innerHTML = totals.map((t, i) => {
+    const isCurrent = i === 0;
     const yoyCls = t.yoy_sugar!=null ? (t.yoy_sugar>0?'bear-text':'bull-text') : 'dim-text';
-    const n = (v, dp, suf='') => v!=null ? v.toFixed(dp)+suf : '—';
-    return `<tr style="${isCur?'background:rgba(0,212,168,0.06)':''}">
-      <td class="text-mono" style="${isCur?'font-weight:700;color:var(--bull)':''}">
-        ${t.safra}${isCur?'<span style="font-size:9px;margin-left:6px;color:var(--dim);font-weight:400">en curso</span>':''}
+    const sugarCell = t.complete
+      ? t.total_sugar.toFixed(2)
+      : `<span style="color:var(--neut)">${t.total_sugar.toFixed(2)} ▲</span>`;
+    return `<tr style="${isCurrent?'background:rgba(245,158,11,0.05)':''}">
+      <td class="text-mono" style="${isCurrent?'color:var(--neut);font-weight:700':''}">
+        ${t.safra}${isCurrent?'<span style="font-size:9px;margin-left:6px;color:var(--dim);font-weight:400;letter-spacing:1px">IN PROGRESS</span>':''}
       </td>
-      <td class="text-right text-mono" style="${isCur?'font-weight:700':''}">
-        ${t.complete ? n(t.total_sugar,2) : '<span style="color:var(--dim)">'+n(t.total_sugar,2)+' ▲</span>'}
-      </td>
+      <td class="text-right text-mono" style="${isCurrent?'font-weight:700':''}">${sugarCell}</td>
       <td class="text-right text-mono"><span class="${yoyCls}">${t.yoy_sugar!=null?_sgn(t.yoy_sugar):'—'}</span></td>
-      <td class="text-right text-mono">${n(t.total_cane,1)}</td>
-      <td class="text-right text-mono">${n(t.total_eth,2)}</td>
-      <td class="text-right text-mono">${n(t.avg_mix,1,'%')}</td>
-      <td class="text-right text-mono">${n(t.avg_atr,1)}</td>
+      <td class="text-right text-mono">${_n(t.total_cane,1)}</td>
+      <td class="text-right text-mono">${_n(t.total_eth,2)}</td>
+      <td class="text-right text-mono">${t.avg_mix!=null?t.avg_mix.toFixed(1)+'%':'—'}</td>
+      <td class="text-right text-mono">${_n(t.avg_atr,1)}</td>
+      <td><span style="font-size:10px;font-family:var(--mono);color:${t.complete?'var(--dim)':'var(--neut)'}">
+        ${t.complete?'complete':`Q${t.n_q}/24`}</span>
+      </td>
     </tr>`;
   }).join('');
 }

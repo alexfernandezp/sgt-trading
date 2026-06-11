@@ -324,6 +324,53 @@ def api_unica():
                                   prev_st["total_sugar"] * 100, 1)
                            if prev_st and prev_st["total_sugar"] > 0 else None)
 
+    # ── Historical season production range (display instead of bogus projection) ──
+    hist_complete_vals = sorted([
+        st["total_sugar"] for st in season_totals
+        if st["complete"] and st["total_sugar"]
+    ])
+    hist_season_min = round(hist_complete_vals[0],  1) if hist_complete_vals else None
+    hist_season_max = round(hist_complete_vals[-1], 1) if hist_complete_vals else None
+    hist_season_med = round(hist_complete_vals[len(hist_complete_vals) // 2], 1) if hist_complete_vals else None
+
+    # ── Comparison rows: Q1-Q24 side-by-side both seasons ────────────────────
+    prev_q_by_num = {}
+    if prev_safra:
+        for q in cs_by_safra.get(prev_safra, []):
+            prev_q_by_num[q["q"]] = q
+
+    comparison_rows = []
+    for qi in range(1, 25):
+        cur_q  = next((q for q in cur_qs if q["q"] == qi), None)
+        prev_q = prev_q_by_num.get(qi)
+        if cur_q is None and prev_q is None:
+            continue
+        d_sugar = d_mix = d_atr = None
+        if cur_q and prev_q:
+            if cur_q.get("sugar") and prev_q.get("sugar") and prev_q["sugar"] > 0:
+                d_sugar = round((cur_q["sugar"] - prev_q["sugar"]) / prev_q["sugar"] * 100, 1)
+            if cur_q.get("mix") is not None and prev_q.get("mix") is not None:
+                d_mix = round(cur_q["mix"] - prev_q["mix"], 1)
+            if cur_q.get("atr") is not None and prev_q.get("atr") is not None:
+                d_atr = round(cur_q["atr"] - prev_q["atr"], 1)
+        comparison_rows.append({
+            "q":          qi,
+            "has_cur":    cur_q is not None,
+            "prev_date":  prev_q.get("date")  if prev_q else None,
+            "prev_cane":  prev_q.get("cane")  if prev_q else None,
+            "prev_sugar": prev_q.get("sugar") if prev_q else None,
+            "prev_mix":   prev_q.get("mix")   if prev_q else None,
+            "prev_atr":   prev_q.get("atr")   if prev_q else None,
+            "cur_date":   cur_q.get("date")   if cur_q else None,
+            "cur_cane":   cur_q.get("cane")   if cur_q else None,
+            "cur_sugar":  cur_q.get("sugar")  if cur_q else None,
+            "cur_mix":    cur_q.get("mix")    if cur_q else None,
+            "cur_atr":    cur_q.get("atr")    if cur_q else None,
+            "d_sugar":    d_sugar,
+            "d_mix":      d_mix,
+            "d_atr":      d_atr,
+        })
+
     # ── Historical range per Q (p25/avg/p75 across 10 complete safras) ────────
     COMPLETE_KEYS = [sk for sk in safra_list[1:] if len(cs_by_safra[sk]) >= 23][:10]
     MAX_Q = 24
@@ -363,7 +410,7 @@ def api_unica():
     return jsonify({
         "summary":        summary,
         "cur_detail":     cur_detail,
-        "season_totals":  season_totals[:13],
+        "season_totals":  season_totals[:14],
         "safra_list":     safra_list,
         "prev_safra":     prev_safra,
         # Accumulated sugar: current + prev + historical range
@@ -377,6 +424,12 @@ def api_unica():
         "cur_atr":   cur_atr,  "prev_atr":  prev_atr,
         "cur_eth_an":  cur_eth_an,  "cur_eth_hid":  cur_eth_hid,
         "prev_eth_an": prev_eth_an, "prev_eth_hid": prev_eth_hid,
+        # Season-aligned comparison (Q1-Q24, both seasons)
+        "comparison_rows":  comparison_rows,
+        # Historical production range (replaces bogus pace-based projection)
+        "hist_season_min":  hist_season_min,
+        "hist_season_max":  hist_season_max,
+        "hist_season_med":  hist_season_med,
     })
 
 
