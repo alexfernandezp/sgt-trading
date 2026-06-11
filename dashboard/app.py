@@ -144,50 +144,191 @@ def api_cot():
 
 @app.route("/api/unica")
 def api_unica():
+    T = 1_000_000.0  # t → Mt
+    M = 1_000_000.0  # m3 → Mm3
+
     with SessionLocal() as s:
-        rows = s.execute(text("""
-            SELECT safra, quinzena_num, quinzena_date, region,
-                   cane_net_mt, sugar_net_mt, ethanol_net_m3,
+        cs_rows = s.execute(text("""
+            SELECT safra, quinzena_date,
+                   ROW_NUMBER() OVER (PARTITION BY safra ORDER BY quinzena_date) AS q_num,
+                   cane_crushed_t, sugar_t,
+                   ethanol_anidro_m3, ethanol_hidratado_m3, ethanol_total_m3,
                    sugar_mix_pct, eth_mix_pct, atr_kg_ton
             FROM unica_biweekly
             WHERE region = 'CS'
-            ORDER BY safra, quinzena_num
+            ORDER BY safra, quinzena_date
         """)).fetchall()
 
-    safras = {}
-    for r in rows:
+        sp_rows = s.execute(text("""
+            SELECT safra, quinzena_date,
+                   ROW_NUMBER() OVER (PARTITION BY safra ORDER BY quinzena_date) AS q_num,
+                   cane_crushed_t, sugar_t, ethanol_total_m3, sugar_mix_pct, eth_mix_pct, atr_kg_ton
+            FROM unica_biweekly
+            WHERE region = 'SP'
+            ORDER BY safra, quinzena_date
+        """)).fetchall()
+
+    def _mix(sugar_mix, eth_mix):
+        if sugar_mix is not None and float(sugar_mix) > 0:
+            return round(float(sugar_mix), 1)
+        if eth_mix is not None:
+            return round(100.0 - float(eth_mix), 1)
+        return None
+
+    # ── Build CS per-safra quincena data ──────────────────────────────────────
+    cs_by_safra = {}
+    for r in cs_rows:
         k = r.safra
-        if k not in safras:
-            safras[k] = []
-        safras[k].append({
-            "q":      int(r.quinzena_num),
-            "date":   str(r.quinzena_date) if r.quinzena_date else None,
-            "cane":   _safe_float(r.cane_net_mt),
-            "sugar":  _safe_float(r.sugar_net_mt),
-            "eth_m3": _safe_float(r.ethanol_net_m3),
-            "mix":    _safe_float(r.sugar_mix_pct),
-            "atr":    _safe_float(r.atr_kg_ton),
+        if k not in cs_by_safra:
+            cs_by_safra[k] = []
+        cs_by_safra[k].append({
+            "q":    int(r.q_num),
+            "date": str(r.quinzena_date),
+            "cane": round(float(r.cane_crushed_t) / T, 3) if r.cane_crushed_t else None,
+            "sugar": round(float(r.sugar_t) / T, 4)       if r.sugar_t        else None,
+            "eth_an":  round(float(r.ethanol_anidro_m3) / M, 4)   if r.ethanol_anidro_m3   else None,
+            "eth_hid": round(float(r.ethanol_hidratado_m3) / M, 4) if r.ethanol_hidratado_m3 else None,
+            "eth":  round(float(r.ethanol_total_m3) / M, 4)       if r.ethanol_total_m3   else None,
+            "mix":  _mix(r.sugar_mix_pct, r.eth_mix_pct),
+            "atr":  round(float(r.atr_kg_ton), 2) if r.atr_kg_ton else None,
         })
 
-    safra_list = sorted(safras.keys(), reverse=True)
-    bd = _backdrop()
+    # ── Build SP per-safra data ───────────────────────────────────────────────
+    sp_by_safra = {}
+    for r in sp_rows:
+        k = r.safra
+        if k not in sp_by_safra:
+            sp_by_safra[k] = []
+        sp_by_safra[k].append({
+            "q":     int(r.q_num),
+            "sugar": round(float(r.sugar_t) / T, 4) if r.sugar_t else None,
+            "cane":  round(float(r.cane_crushed_t) / T, 3) if r.cane_crushed_t else None,
+            "mix":   _mix(r.sugar_mix_pct, r.eth_mix_pct),
+            "atr":   round(float(r.atr_kg_ton), 2) if r.atr_kg_ton else None,
+        })
 
-    # Compute cumulative sugar per safra up to current quincena for chart
-    cum_by_safra = {}
-    for sk, qs in safras.items():
-        cum = 0
-        series = []
-        for q in sorted(qs, key=lambda x: x["q"]):
-            if q["sugar"] is not None:
-                cum += q["sugar"]
-            series.append(round(cum, 3))
-        cum_by_safra[sk] = series
+    safra_list = sorted(cs_by_safra.keys(), reverse=True)
+    current_safra = safra_list[0]
+    prev_safra    = safra_list[1] if len(safra_list) > 1 else None
+
+    # ── Cumulative series (sugar + ethanol) per safra ─────────────────────────
+    cum_sugar = {}
+    cum_eth   = {}
+    cum_cane  = {}
+    for sk, qs in cs_by_safra.items():
+        s_acc = e_acc = c_acc = 0.0
+        cs_s, cs_e, cs_c = [], [], []
+        for q in qs:
+            if q["sugar"] is not None: s_acc += q["sugar"]
+            if q["eth"]   is not None: e_acc += q["eth"]
+            if q["cane"]  is not None: c_acc += q["cane"]
+            cs_s.append(round(s_acc, 3))
+            cs_e.append(round(e_acc, 3))
+            cs_c.append(round(c_acc, 1))
+        cum_sugar[sk] = cs_s
+        cum_eth[sk]   = cs_e
+        cum_cane[sk]  = cs_c
+
+    # ── Season totals per safra (for the summary table) ───────────────────────
+    season_totals = []
+    for sk in safra_list:
+        qs = cs_by_safra[sk]
+        total_sugar = sum(q["sugar"] for q in qs if q["sugar"])
+        total_cane  = sum(q["cane"]  for q in qs if q["cane"])
+        total_eth   = sum(q["eth"]   for q in qs if q["eth"])
+        mix_vals    = [q["mix"] for q in qs if q["mix"]]
+        atr_vals    = [q["atr"] for q in qs if q["atr"]]
+        n_q         = len(qs)
+        is_complete = n_q >= 23
+        season_totals.append({
+            "safra":       sk,
+            "total_sugar": round(total_sugar, 2),
+            "total_cane":  round(total_cane,  1),
+            "total_eth":   round(total_eth,   2),
+            "avg_mix":     round(sum(mix_vals) / len(mix_vals), 1) if mix_vals else None,
+            "avg_atr":     round(sum(atr_vals) / len(atr_vals), 1) if atr_vals else None,
+            "n_q":         n_q,
+            "complete":    is_complete,
+        })
+
+    # ── Projection: historical Q-pace ratio ───────────────────────────────────
+    cur_qs    = cs_by_safra[current_safra]
+    cur_q_num = len(cur_qs)
+    cum_now   = cum_sugar[current_safra][-1] if cum_sugar[current_safra] else 0.0
+
+    ratios = []
+    for st in season_totals:
+        if st["complete"] and st["total_sugar"] > 0:
+            hist_qs = cs_by_safra[st["safra"]]
+            if len(hist_qs) >= cur_q_num:
+                cum_at_q = sum(q["sugar"] for q in hist_qs[:cur_q_num] if q["sugar"])
+                ratios.append(cum_at_q / st["total_sugar"])
+    proj_sugar = None
+    if ratios and cum_now > 0:
+        median_ratio = sorted(ratios)[len(ratios) // 2]
+        if median_ratio > 0:
+            proj_sugar = round(cum_now / median_ratio, 2)
+
+    # ── Current summary KPIs ──────────────────────────────────────────────────
+    last_q = cur_qs[-1] if cur_qs else {}
+
+    yoy_sugar = yoy_cane = yoy_eth = None
+    if prev_safra and prev_safra in cs_by_safra:
+        prev_qs = cs_by_safra[prev_safra]
+        if len(prev_qs) >= cur_q_num:
+            prev_cum_sugar = sum(q["sugar"] for q in prev_qs[:cur_q_num] if q["sugar"])
+            prev_cum_cane  = sum(q["cane"]  for q in prev_qs[:cur_q_num] if q["cane"])
+            prev_cum_eth   = sum(q["eth"]   for q in prev_qs[:cur_q_num] if q["eth"])
+            if prev_cum_sugar > 0:
+                yoy_sugar = round((cum_now - prev_cum_sugar) / prev_cum_sugar * 100, 1)
+            if prev_cum_cane  > 0:
+                yoy_cane  = round((cum_cane[current_safra][-1]  - prev_cum_cane)  / prev_cum_cane  * 100, 1)
+            if prev_cum_eth   > 0:
+                yoy_eth   = round((cum_eth[current_safra][-1]   - prev_cum_eth)   / prev_cum_eth   * 100, 1)
+
+    # ── YoY per quincena (vs same Q prev safra) ───────────────────────────────
+    prev_q_map = {}
+    if prev_safra and prev_safra in cs_by_safra:
+        for q in cs_by_safra[prev_safra]:
+            prev_q_map[q["q"]] = q
+
+    cur_detail = []
+    for q in cur_qs:
+        pq    = prev_q_map.get(q["q"], {})
+        ps    = pq.get("sugar")
+        yoy_q = round((q["sugar"] - ps) / ps * 100, 1) if (q["sugar"] and ps and ps > 0) else None
+        cum_q = cum_sugar[current_safra][q["q"] - 1]
+        cur_detail.append({**q, "yoy_q": yoy_q, "cum_sugar": cum_q})
+
+    summary = {
+        "safra":        current_safra,
+        "q_num":        cur_q_num,
+        "q_date":       last_q.get("date"),
+        "cum_sugar":    round(cum_now, 3),
+        "cum_cane":     cum_cane[current_safra][-1] if cum_cane[current_safra] else None,
+        "cum_eth":      cum_eth[current_safra][-1]  if cum_eth[current_safra]  else None,
+        "atr":          last_q.get("atr"),
+        "mix":          last_q.get("mix"),
+        "yoy_sugar":    yoy_sugar,
+        "yoy_cane":     yoy_cane,
+        "yoy_eth":      yoy_eth,
+        "proj_sugar":      proj_sugar,
+        "n_proj_hist":     len(ratios),
+        "proj_reliable":   cur_q_num >= 6,
+    }
 
     return jsonify({
-        "safras":       safras,
-        "safra_list":   safra_list[:5],
-        "cum_by_safra": cum_by_safra,
-        "backdrop":     bd,
+        "summary":       summary,
+        "cur_detail":    cur_detail,
+        "season_totals": season_totals[:12],
+        "cum_sugar":     {k: cum_sugar[k] for k in safra_list[:7]},
+        "cum_eth":       {k: cum_eth[k]   for k in safra_list[:5]},
+        "mix_series":    {k: [q["mix"] for q in cs_by_safra[k]] for k in safra_list[:5]},
+        "atr_series":    {k: [q["atr"] for q in cs_by_safra[k]] for k in safra_list[:5]},
+        "sp_cum_sugar":  {k: [round(sum(q["sugar"] for q in sp_by_safra[k][:i+1] if q["sugar"]), 3)
+                              for i in range(len(sp_by_safra[k]))]
+                          for k in sorted(sp_by_safra.keys(), reverse=True)[:4]},
+        "safra_list":    safra_list,
     })
 
 
