@@ -678,6 +678,266 @@ def api_seasonal():
     return jsonify({"month_stats": month_stats, "q1_records": q1_records})
 
 
+# ── API: Forecast comparison (model vs MAPA vs UNICA actual) ──────────────────
+
+@app.route("/api/forecast")
+def api_forecast():
+    """
+    Returns three data sources for each Centro-Sul quinzena:
+      - unica: actual data from DB (unica_biweekly)
+      - mapa:  MAPA estimates (mapa_estimates table)
+      - model: our retrospective forecast (what model would have predicted for Q_n
+               given data through Q_{n-1})
+    Also includes the live model forecast for the NEXT unpublished quinzena.
+    """
+    T = 1_000_000.0
+    SAFRA = "2026-2027"
+
+    with SessionLocal() as s:
+        # UNICA actuals for current safra
+        unica_rows = s.execute(text("""
+            SELECT quinzena_date,
+                   ROW_NUMBER() OVER (ORDER BY quinzena_date) AS q_num,
+                   cane_crushed_t, sugar_t, sugar_mix_pct, eth_mix_pct, atr_kg_ton
+            FROM unica_biweekly
+            WHERE region='CS' AND safra=:safra
+            ORDER BY quinzena_date
+        """), {"safra": SAFRA}).fetchall()
+
+        # MAPA estimates
+        mapa_rows = s.execute(text("""
+            SELECT position_date, q_num, net_cane_mt, net_sugar_mt
+            FROM mapa_estimates
+            WHERE safra=:safra
+            ORDER BY position_date
+        """), {"safra": SAFRA}).fetchall()
+
+        # Historical data for forecast model (10 complete prior safras)
+        hist_rows = s.execute(text("""
+            SELECT safra, quinzena_date,
+                   ROW_NUMBER() OVER (PARTITION BY safra ORDER BY quinzena_date) AS q_num,
+                   cane_crushed_t, sugar_t, sugar_mix_pct, eth_mix_pct, atr_kg_ton
+            FROM unica_biweekly
+            WHERE region='CS' AND safra != :safra
+            ORDER BY safra, quinzena_date
+        """), {"safra": SAFRA}).fetchall()
+
+    def _mix(smix, emix):
+        if smix is not None and float(smix) > 0: return round(float(smix), 1)
+        if emix is not None: return round(100.0 - float(emix), 1)
+        return None
+
+    # Build UNICA actuals list
+    unica = []
+    for r in unica_rows:
+        unica.append({
+            "q_num":  int(r.q_num),
+            "date":   str(r.quinzena_date),
+            "cane":   round(float(r.cane_crushed_t) / T, 3) if r.cane_crushed_t else None,
+            "sugar":  round(float(r.sugar_t) / T, 4)       if r.sugar_t        else None,
+            "mix":    _mix(r.sugar_mix_pct, r.eth_mix_pct),
+            "atr":    round(float(r.atr_kg_ton), 1)        if r.atr_kg_ton     else None,
+        })
+
+    # Build MAPA estimates map: q_num → values
+    mapa_by_q = {}
+    for r in mapa_rows:
+        mapa_by_q[int(r.q_num)] = {
+            "date":  str(r.position_date),
+            "cane":  round(float(r.net_cane_mt),  3) if r.net_cane_mt  else None,
+            "sugar": round(float(r.net_sugar_mt), 4) if r.net_sugar_mt else None,
+        }
+
+    # Build historical per-safra structure (same as api_unica logic)
+    hist_by_safra = {}
+    safra_q_count = {}
+    for r in hist_rows:
+        sk = r.safra
+        if sk not in hist_by_safra:
+            hist_by_safra[sk] = []
+        hist_by_safra[sk].append({
+            "q":     int(r.q_num),
+            "cane":  round(float(r.cane_crushed_t) / T, 3) if r.cane_crushed_t else None,
+            "sugar": round(float(r.sugar_t) / T, 4)       if r.sugar_t        else None,
+            "mix":   _mix(r.sugar_mix_pct, r.eth_mix_pct),
+            "atr":   round(float(r.atr_kg_ton), 1)        if r.atr_kg_ton     else None,
+        })
+        safra_q_count[sk] = safra_q_count.get(sk, 0) + 1
+
+    # 10 most recent complete safras as historical baseline
+    COMPLETE_KEYS = sorted(
+        [sk for sk, n in safra_q_count.items() if n >= 23],
+        reverse=True,
+    )[:10]
+    MAX_Q = 24
+
+    # Compute historical averages per quinzena
+    def _hist_avg_series(key):
+        out = []
+        for qi in range(MAX_Q):
+            vals = [hist_by_safra[sk][qi][key]
+                    for sk in COMPLETE_KEYS
+                    if qi < len(hist_by_safra.get(sk, []))
+                    and hist_by_safra[sk][qi][key] is not None]
+            out.append(round(sum(vals)/len(vals), 4) if vals else None)
+        return out
+
+    def _hist_pct(key, pct):
+        """P25 or P75 per quinzena."""
+        out = []
+        for qi in range(MAX_Q):
+            vals = sorted([hist_by_safra[sk][qi][key]
+                           for sk in COMPLETE_KEYS
+                           if qi < len(hist_by_safra.get(sk, []))
+                           and hist_by_safra[sk][qi][key] is not None])
+            if vals:
+                n = len(vals)
+                idx = max(0, min(n-1, int(n * pct)))
+                out.append(round(vals[idx], 4))
+            else:
+                out.append(None)
+        return out
+
+    hist_cane_avg  = _hist_avg_series("cane")
+    hist_sugar_avg = _hist_avg_series("sugar")
+    hist_mix_avg   = _hist_avg_series("mix")
+    hist_atr_avg   = _hist_avg_series("atr")
+    hist_mix_p25   = _hist_pct("mix", 0.25)
+    hist_mix_p75   = _hist_pct("mix", 0.75)
+    hist_atr_p25   = _hist_pct("atr", 0.25)
+    hist_atr_p75   = _hist_pct("atr", 0.75)
+
+    # ── Retrospective model accuracy: for each published quinzena Q_n,
+    #    compute what the model predicted for Q_n using only Q_1..Q_{n-1} data
+    retro_forecasts = {}
+    for target_qi_0 in range(1, len(unica)):  # can't forecast Q1 (no prior data)
+        inputs = unica[:target_qi_0]  # data available BEFORE Q_n
+        fc = forecast_next_quinzena(
+            current_qs    = inputs,
+            hist_cane_avg = hist_cane_avg,
+            hist_sugar_avg= hist_sugar_avg,
+            hist_mix_avg  = hist_mix_avg,
+            hist_mix_p25  = hist_mix_p25,
+            hist_mix_p75  = hist_mix_p75,
+            hist_atr_avg  = hist_atr_avg,
+            hist_atr_p25  = hist_atr_p25,
+            hist_atr_p75  = hist_atr_p75,
+        )
+        if fc:
+            retro_forecasts[target_qi_0 + 1] = fc  # 1-based q_num of target
+
+    # ── Live forecast for NEXT unpublished quinzena
+    live_forecast = forecast_next_quinzena(
+        current_qs    = unica,
+        hist_cane_avg = hist_cane_avg,
+        hist_sugar_avg= hist_sugar_avg,
+        hist_mix_avg  = hist_mix_avg,
+        hist_mix_p25  = hist_mix_p25,
+        hist_mix_p75  = hist_mix_p75,
+        hist_atr_avg  = hist_atr_avg,
+        hist_atr_p25  = hist_atr_p25,
+        hist_atr_p75  = hist_atr_p75,
+    )
+
+    # ── Build comparison rows
+    # Max Q covered by any source
+    max_q_any = max(
+        [u["q_num"] for u in unica] +
+        list(mapa_by_q.keys()) +
+        ([live_forecast["q_num"]] if live_forecast else []),
+        default=0,
+    )
+
+    _Q_LABELS = [
+        'Apr-16','May-01','May-16','Jun-01','Jun-16','Jul-01','Jul-16','Aug-01',
+        'Aug-16','Sep-01','Sep-16','Oct-01','Oct-16','Nov-01','Nov-16','Dec-01',
+        'Dec-16','Jan-01','Jan-16','Feb-01','Feb-16','Mar-01','Mar-16','Apr-01',
+    ]
+
+    rows = []
+    for q in range(1, max_q_any + 1):
+        u = next((x for x in unica if x["q_num"] == q), None)
+        m = mapa_by_q.get(q)
+        model_fc = retro_forecasts.get(q) or (live_forecast if (live_forecast and live_forecast.get("q_num") == q) else None)
+
+        # Errors (only when UNICA actual exists)
+        model_cane_err = model_sugar_err = mapa_cane_err = mapa_sugar_err = None
+        if u:
+            if model_fc and model_fc.get("cane_forecast") and u.get("cane"):
+                model_cane_err = round(model_fc["cane_forecast"] - u["cane"], 3)
+            if model_fc and model_fc.get("sugar_forecast") and u.get("sugar"):
+                model_sugar_err = round(model_fc["sugar_forecast"] - u["sugar"], 4)
+            if m and m.get("cane") and u.get("cane"):
+                mapa_cane_err = round(m["cane"] - u["cane"], 3)
+            if m and m.get("sugar") and u.get("sugar"):
+                mapa_sugar_err = round(m["sugar"] - u["sugar"], 4)
+
+        rows.append({
+            "q_num":     q,
+            "label":     _Q_LABELS[q-1] if q <= len(_Q_LABELS) else f"Q{q}",
+            "is_live":   u is None,  # True = not yet published by UNICA
+            # UNICA actual
+            "unica_cane":  u.get("cane")  if u else None,
+            "unica_sugar": u.get("sugar") if u else None,
+            "unica_mix":   u.get("mix")   if u else None,
+            "unica_atr":   u.get("atr")   if u else None,
+            # MAPA estimate
+            "mapa_cane":   m.get("cane")  if m else None,
+            "mapa_sugar":  m.get("sugar") if m else None,
+            # Model forecast
+            "model_cane":        model_fc.get("cane_forecast")  if model_fc else None,
+            "model_sugar":       model_fc.get("sugar_forecast") if model_fc else None,
+            "model_mix":         model_fc.get("mix_forecast")   if model_fc else None,
+            "model_atr":         model_fc.get("atr_forecast")   if model_fc else None,
+            "model_confidence":  model_fc.get("confidence")     if model_fc else None,
+            "model_pace":        model_fc.get("pace_ratio")     if model_fc else None,
+            # Errors vs UNICA actual
+            "model_cane_err":  model_cane_err,
+            "model_sugar_err": model_sugar_err,
+            "mapa_cane_err":   mapa_cane_err,
+            "mapa_sugar_err":  mapa_sugar_err,
+        })
+
+    # ── Accuracy summary (for quinzenas with UNICA actual + model forecast)
+    model_cane_errs  = [r["model_cane_err"]  for r in rows if r["model_cane_err"]  is not None]
+    model_sugar_errs = [r["model_sugar_err"] for r in rows if r["model_sugar_err"] is not None]
+    mapa_cane_errs   = [r["mapa_cane_err"]   for r in rows if r["mapa_cane_err"]   is not None]
+    mapa_sugar_errs  = [r["mapa_sugar_err"]  for r in rows if r["mapa_sugar_err"]  is not None]
+
+    def _mae(errs):
+        return round(sum(abs(e) for e in errs) / len(errs), 3) if errs else None
+
+    accuracy = {
+        "n_compared":         len(model_cane_errs),
+        "model_cane_mae":     _mae(model_cane_errs),
+        "model_sugar_mae":    _mae(model_sugar_errs),
+        "mapa_cane_mae":      _mae(mapa_cane_errs),
+        "mapa_sugar_mae":     _mae(mapa_sugar_errs),
+    }
+
+    return jsonify({
+        "safra":        SAFRA,
+        "rows":         rows,
+        "live_forecast": live_forecast,
+        "accuracy":     accuracy,
+        "n_hist_safras": len(COMPLETE_KEYS),
+    })
+
+
+# ── API: Refresh MAPA data ────────────────────────────────────────────────────
+
+@app.route("/api/mapa/refresh", methods=["POST"])
+def api_mapa_refresh():
+    """Trigger MAPA data refresh (download latest XLS files and update DB)."""
+    from ingestion.mapa import save_mapa_to_db
+    try:
+        with SessionLocal() as s:
+            n = save_mapa_to_db(s, safra="2026-2027", safra_slug="2026-2027")
+        return jsonify({"ok": True, "rows_updated": n})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
