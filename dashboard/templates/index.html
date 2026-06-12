@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SGT Trading Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 /* ── Variables — JPMorgan light theme ── */
@@ -30,7 +30,7 @@
   --blue-bg:   rgba(0,48,135,.06);
   --purple:    #6D28D9;
   --font:      'Inter', system-ui, -apple-system, sans-serif;
-  --mono:      'IBM Plex Mono', 'Cascadia Code', 'Consolas', monospace;
+  --mono:      'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); font-family: var(--font);
@@ -79,23 +79,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 .tab-panel.active { display: block; }
 
 /* ── Section titles ── */
-.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-.section-title { font-size: 13.5px; font-weight: 600; color: var(--text); letter-spacing: .2px; }
-.section-sub { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
+.section-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+.section-title { font-size: 11px; font-weight: 700; color: var(--text); letter-spacing: 1.8px; text-transform: uppercase; }
+.section-sub { color: var(--muted); font-size: 11px; margin-left: 6px; letter-spacing: .2px; }
 .section-divider { flex: 1; height: 1px; background: var(--border); }
 
 /* ── KPI Cards ── */
 .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-.kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 4px;
-            padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,20,0.05); }
+.kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 2px;
+            padding: 18px 20px; box-shadow: 0 1px 2px rgba(0,0,20,0.04); }
 .kpi-label { font-size: 10px; color: var(--muted); text-transform: uppercase;
-             letter-spacing: 1px; margin-bottom: 7px; font-weight: 500; }
-.kpi-value { font-size: 26px; font-family: var(--mono); font-weight: 600; line-height: 1.1; }
+             letter-spacing: 1.2px; margin-bottom: 8px; font-weight: 600; }
+.kpi-value { font-size: 26px; font-family: var(--mono); font-weight: 600; line-height: 1.1;
+             font-variant-numeric: tabular-nums; }
 .kpi-sub { font-size: 11px; color: var(--dim); margin-top: 5px; }
-.kpi-card.bull { border-left: 3px solid var(--bull);  background: linear-gradient(135deg, var(--card), var(--bull-bg)); }
-.kpi-card.bear { border-left: 3px solid var(--bear);  background: linear-gradient(135deg, var(--card), var(--bear-bg)); }
-.kpi-card.neut { border-left: 3px solid var(--neut);  background: linear-gradient(135deg, var(--card), var(--neut-bg)); }
-.kpi-card.blue { border-left: 3px solid var(--blue);  background: linear-gradient(135deg, var(--card), var(--blue-bg)); }
+.kpi-card.bull { border-top: 3px solid var(--bull); }
+.kpi-card.bear { border-top: 3px solid var(--bear); }
+.kpi-card.neut { border-top: 3px solid var(--neut); }
+.kpi-card.blue { border-top: 3px solid var(--blue); }
 .bull-text { color: var(--bull); }
 .bear-text { color: var(--bear); }
 .neut-text { color: var(--neut); }
@@ -121,7 +122,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 .data-table th.th-left { text-align: left; }
 .data-table td { padding: 5px 10px; border-bottom: 1px solid var(--border2);
                  font-family: var(--mono); white-space: nowrap; font-size: 12px;
-                 text-align: right; }
+                 text-align: right; font-variant-numeric: tabular-nums; }
 .data-table td.td-left { text-align: left; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: var(--card2); }
@@ -195,13 +196,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
 <!-- ── Sidebar ── -->
 <nav class="sidebar">
-  <div class="nav-section">Operativa</div>
+  <div class="nav-section">Trading</div>
   <button class="tab-btn active" data-tab="signal">
-    <span class="tab-icon">⚡</span> Señal del Día
+    <span class="tab-icon">⚡</span> Daily Signal
     <span class="tab-badge">LIVE</span>
   </button>
 
-  <div class="nav-section">Fundamentales</div>
+  <div class="nav-section">Fundamentals</div>
   <button class="tab-btn" data-tab="brazil">
     <span class="tab-icon">🌱</span> Brazil / UNICA
   </button>
@@ -212,34 +213,34 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
     <span class="tab-icon">🌍</span> USDA Balance
   </button>
   <button class="tab-btn" data-tab="exports">
-    <span class="tab-icon">🚢</span> Exportaciones
-    <span class="tab-soon">pronto</span>
+    <span class="tab-icon">🚢</span> Exports
+    <span class="tab-soon">soon</span>
   </button>
   <button class="tab-btn" data-tab="weather">
-    <span class="tab-icon">🌦️</span> Climatología
-    <span class="tab-soon">pronto</span>
+    <span class="tab-icon">🌦️</span> Weather
+    <span class="tab-soon">soon</span>
   </button>
 
-  <div class="nav-section">Posicionamiento</div>
+  <div class="nav-section">Positioning</div>
   <button class="tab-btn" data-tab="cot">
-    <span class="tab-icon">📊</span> COT / Fondos
+    <span class="tab-icon">📊</span> COT / Funds
   </button>
   <button class="tab-btn" data-tab="seasonal">
-    <span class="tab-icon">📅</span> Estacionalidad
+    <span class="tab-icon">📅</span> Seasonality
   </button>
 
-  <div class="nav-section">Mercado</div>
+  <div class="nav-section">Market</div>
   <button class="tab-btn" data-tab="futures">
-    <span class="tab-icon">📉</span> Curva Futuros
-    <span class="tab-soon">pronto</span>
+    <span class="tab-icon">📉</span> Futures Curve
+    <span class="tab-soon">soon</span>
   </button>
   <button class="tab-btn" data-tab="spreads">
     <span class="tab-icon">↔️</span> Spreads
-    <span class="tab-soon">pronto</span>
+    <span class="tab-soon">soon</span>
   </button>
   <button class="tab-btn" data-tab="options">
-    <span class="tab-icon">⚙️</span> Opciones
-    <span class="tab-soon">pronto</span>
+    <span class="tab-icon">⚙️</span> Options
+    <span class="tab-soon">soon</span>
   </button>
 </nav>
 
@@ -251,7 +252,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 ===================================================== -->
 <div id="tab-signal" class="tab-panel active">
   <div class="section-header">
-    <span class="section-title">Señal del Día</span>
+    <span class="section-title">Daily Signal</span>
     <span class="section-sub" id="signal-date"></span>
     <div class="section-divider"></div>
   </div>
@@ -260,18 +261,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
     <span class="fund-label">Fundamental:</span>
     <span class="fund-direction" id="fund-dir">—</span>
     <span class="fund-sep">|</span>
-    <span class="fund-detail" id="fund-summary">cargando...</span>
+    <span class="fund-detail" id="fund-summary">loading...</span>
     <span class="fund-updated" id="fund-updated"></span>
   </div>
 
   <div class="kpi-row" id="signal-kpis">
     <div class="kpi-card" id="kpi-decision">
-      <div class="kpi-label">Decisión</div>
+      <div class="kpi-label">Decision</div>
       <div class="kpi-value" id="kpi-dec-val">—</div>
       <div class="kpi-sub" id="kpi-dec-sub"></div>
     </div>
     <div class="kpi-card blue">
-      <div class="kpi-label">Score Total</div>
+      <div class="kpi-label">Total Score</div>
       <div class="kpi-value blue-text" id="kpi-score">—</div>
       <div class="kpi-sub" id="kpi-score-sub">
         <div class="score-bar-wrap"><div class="score-bar" id="kpi-score-bar" style="width:0;background:var(--blue)"></div></div>
@@ -290,17 +291,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
   </div>
 
   <div class="card mb-16">
-    <div class="card-title">Shadow Trades — últimas señales</div>
+    <div class="card-title">Shadow Trades — Recent Signals</div>
     <table class="data-table">
       <thead>
         <tr>
-          <th>Fecha</th>
+          <th>Date</th>
           <th>Dir.</th>
-          <th>Decisión</th>
+          <th>Decision</th>
           <th>Score</th>
           <th>COT %</th>
           <th>Fundamental</th>
-          <th class="text-right">Entrada</th>
+          <th class="text-right">Entry</th>
           <th class="text-right">Ret 1d</th>
           <th class="text-right">Ret 5d</th>
           <th class="text-right">Ret 10d</th>
@@ -308,7 +309,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
         </tr>
       </thead>
       <tbody id="shadow-trades-body">
-        <tr><td colspan="11" class="loading">Cargando...</td></tr>
+        <tr><td colspan="11" class="loading">Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -381,7 +382,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
   <!-- ── KPI 4 cards ── -->
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
 
-    <div class="kpi-card" style="border-left:3px solid var(--blue)">
+    <div class="kpi-card" style="border-top:3px solid var(--blue)">
       <div class="kpi-label">Accumulated Sugar CS</div>
       <div class="kpi-value blue-text" id="br-cum-sugar">—</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
@@ -390,7 +391,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
       </div>
     </div>
 
-    <div class="kpi-card" style="border-left:3px solid var(--muted)">
+    <div class="kpi-card" style="border-top:3px solid var(--muted)">
       <div class="kpi-label">Accumulated Cane CS</div>
       <div class="kpi-value" id="br-cum-cane">—</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
@@ -399,13 +400,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
       </div>
     </div>
 
-    <div class="kpi-card" style="border-left:3px solid var(--neut)">
+    <div class="kpi-card" style="border-top:3px solid var(--neut)">
       <div class="kpi-label">Sugar Mix % (last period)</div>
       <div class="kpi-value" id="br-mix">—</div>
       <div style="font-size:10px;color:var(--dim);margin-top:6px;font-family:var(--mono)">ATR: <span id="br-atr-inline" style="color:var(--text)">—</span> kg/t</div>
     </div>
 
-    <div class="kpi-card" style="border-left:3px solid var(--muted)">
+    <div class="kpi-card" style="border-top:3px solid var(--muted)">
       <div class="kpi-label">Accumulated Ethanol CS</div>
       <div class="kpi-value" id="br-cum-eth">—</div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
@@ -543,8 +544,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
   <!-- Header -->
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
     <div>
-      <div class="section-title">Forecast Quinzenal · CS 2026/27</div>
-      <div class="section-sub" id="fc-subtitle">Modelo vs MAPA vs UNICA actual</div>
+      <div class="section-title">Biweekly Forecast · CS 2026/27</div>
+      <div class="section-sub" id="fc-subtitle">Model vs MAPA vs UNICA Actual</div>
     </div>
     <div style="display:flex;gap:10px;align-items:center">
       <div style="font-size:10px;font-family:var(--mono);color:var(--dim)" id="fc-accuracy-summary">—</div>
@@ -554,10 +555,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 
   <!-- Legend -->
   <div style="display:flex;gap:20px;margin-bottom:14px;font-size:10px;font-family:var(--mono)">
-    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:var(--blue);display:inline-block;border-radius:2px"></span>UNICA actual</div>
-    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:rgba(255,183,77,0.8);display:inline-block;border-radius:2px"></span>MAPA estimado</div>
-    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:rgba(102,187,106,0.8);display:inline-block;border-radius:2px"></span>Modelo (pace+trend+ratio)</div>
-    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border:1px dashed var(--dim);display:inline-block;border-radius:2px"></span>PENDIENTE / FORECAST VIVO</div>
+    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:var(--blue);display:inline-block;border-radius:2px"></span>UNICA Actual</div>
+    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:rgba(255,183,77,0.8);display:inline-block;border-radius:2px"></span>MAPA Estimate</div>
+    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;background:rgba(102,187,106,0.8);display:inline-block;border-radius:2px"></span>Model (pace+trend+ratio)</div>
+    <div style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border:1px dashed var(--dim);display:inline-block;border-radius:2px"></span>PENDING / LIVE FORECAST</div>
   </div>
 
   <!-- Comparison table -->
@@ -598,51 +599,51 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 ===================================================== -->
 <div id="tab-usda" class="tab-panel">
   <div class="section-header">
-    <span class="section-title">USDA — Balance Global Azúcar</span>
+    <span class="section-title">USDA — Global Sugar Balance</span>
     <span class="section-sub">World Balance · MY 2000-2026</span>
     <div class="section-divider"></div>
   </div>
 
   <div class="kpi-row" id="usda-kpis">
     <div class="kpi-card">
-      <div class="kpi-label">MY Actual</div>
+      <div class="kpi-label">Current MY</div>
       <div class="kpi-value blue-text" id="usda-my">—</div>
       <div class="kpi-sub" id="usda-my-sub"></div>
     </div>
     <div class="kpi-card" id="usda-kpi-stu">
-      <div class="kpi-label">STU Global</div>
+      <div class="kpi-label">Global S/U</div>
       <div class="kpi-value" id="usda-stu">—</div>
-      <div class="kpi-sub" id="usda-stu-sub">stocks / uso</div>
+      <div class="kpi-sub" id="usda-stu-sub">stocks / usage</div>
     </div>
     <div class="kpi-card" id="usda-kpi-surp">
-      <div class="kpi-label">Superávit / Déficit</div>
+      <div class="kpi-label">Surplus / Deficit</div>
       <div class="kpi-value" id="usda-surplus">—</div>
-      <div class="kpi-sub">Mt (prod − consumo)</div>
+      <div class="kpi-sub">Mt (prod − consumption)</div>
     </div>
     <div class="kpi-card" id="usda-kpi-trend">
-      <div class="kpi-label">Tendencia STU</div>
+      <div class="kpi-label">S/U Trend</div>
       <div class="kpi-value" id="usda-trend">—</div>
-      <div class="kpi-sub">vs MY anterior</div>
+      <div class="kpi-sub">vs prior MY</div>
     </div>
   </div>
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">STU% por año azucarero (2000-2026)</div>
+      <div class="card-title">S/U% by Marketing Year (2000-2026)</div>
       <div class="chart-wrap tall"><canvas id="chart-stu"></canvas></div>
     </div>
     <div class="card">
-      <div class="card-title">Superávit / Déficit global (Mt)</div>
+      <div class="card-title">Global Surplus / Deficit (Mt)</div>
       <div class="chart-wrap tall"><canvas id="chart-surplus"></canvas></div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-title">Producción por país — MY más reciente</div>
+    <div class="card-title">Production by Country — Most Recent MY</div>
     <table class="data-table w-full">
       <thead><tr>
-        <th>País</th><th class="text-right">Producción (Mt)</th>
-        <th class="text-right">YoY %</th><th>Régimen</th>
+        <th>Country</th><th class="text-right">Production (Mt)</th>
+        <th class="text-right">YoY %</th><th>Regime</th>
       </tr></thead>
       <tbody id="usda-countries"></tbody>
     </table>
@@ -654,46 +655,46 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 ===================================================== -->
 <div id="tab-cot" class="tab-panel">
   <div class="section-header">
-    <span class="section-title">COT — Posicionamiento Money Managers</span>
-    <span class="section-sub">CFTC · weekly · 2007-presente</span>
+    <span class="section-title">COT — Money Manager Positioning</span>
+    <span class="section-sub">CFTC · Weekly · 2007–Present</span>
     <div class="section-divider"></div>
   </div>
 
   <div class="kpi-row" id="cot-kpis">
     <div class="kpi-card" id="cot-kpi-mm">
-      <div class="kpi-label">MM Net (actual)</div>
+      <div class="kpi-label">MM Net (Current)</div>
       <div class="kpi-value" id="cot-mm-val">—</div>
       <div class="kpi-sub" id="cot-mm-date"></div>
     </div>
     <div class="kpi-card" id="cot-kpi-pct">
-      <div class="kpi-label">Percentil 3yr</div>
+      <div class="kpi-label">3yr Percentile</div>
       <div class="kpi-value" id="cot-pct-val">—</div>
       <div class="kpi-sub" id="cot-pct-sub"></div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Non-Comm Net</div>
       <div class="kpi-value blue-text" id="cot-ncomm-val">—</div>
-      <div class="kpi-sub">especuladores legacy</div>
+      <div class="kpi-sub">legacy speculators</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Open Interest</div>
       <div class="kpi-value" id="cot-oi-val">—</div>
-      <div class="kpi-sub">contratos totales</div>
+      <div class="kpi-sub">total contracts</div>
     </div>
   </div>
 
   <div class="card mb-16">
-    <div class="card-title">MM Net — últimos 3 años (contratos)</div>
+    <div class="card-title">MM Net — Last 3 Years (contracts)</div>
     <div class="chart-wrap tall"><canvas id="chart-cot-mm"></canvas></div>
   </div>
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">Percentil 3yr — MM Net</div>
+      <div class="card-title">3yr Percentile — MM Net</div>
       <div class="chart-wrap"><canvas id="chart-cot-pct"></canvas></div>
     </div>
     <div class="card">
-      <div class="card-title">Open Interest total</div>
+      <div class="card-title">Open Interest</div>
       <div class="chart-wrap"><canvas id="chart-cot-oi"></canvas></div>
     </div>
   </div>
@@ -704,33 +705,33 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 ===================================================== -->
 <div id="tab-seasonal" class="tab-panel">
   <div class="section-header">
-    <span class="section-title">Estacionalidad</span>
-    <span class="section-sub">Precio SB_CONT · COT Q1 trigger · 2007-2025</span>
+    <span class="section-title">Seasonality</span>
+    <span class="section-sub">SB_CONT Price · COT Q1 Trigger · 2007–2025</span>
     <div class="section-divider"></div>
   </div>
 
   <div class="grid-2">
     <div class="card">
-      <div class="card-title">Retorno promedio mensual (%) — SB_CONT histórico</div>
+      <div class="card-title">Avg Monthly Return (%) — SB_CONT Historical</div>
       <div class="chart-wrap"><canvas id="chart-seas-monthly"></canvas></div>
     </div>
     <div class="card">
-      <div class="card-title">Win Rate por mes (% de años positivos)</div>
+      <div class="card-title">Win Rate by Month (% positive years)</div>
       <div class="chart-wrap"><canvas id="chart-seas-wr"></canvas></div>
     </div>
   </div>
 
   <div class="card mb-16">
-    <div class="card-title">Trigger Q1 — Acumulación oct→mar vs retorno abr→sep · Pearson r ≈ 0.37</div>
+    <div class="card-title">Q1 Trigger — Accumulation Oct→Mar vs Return Apr→Sep · Pearson r ≈ 0.37</div>
     <div class="chart-wrap"><canvas id="chart-q1-trigger"></canvas></div>
   </div>
 
   <div class="card">
-    <div class="card-title">Tabla: Q1 acumulación por año</div>
+    <div class="card-title">Q1 Accumulation by Year</div>
     <table class="data-table w-full">
       <thead><tr>
-        <th>Año</th><th class="text-right">Q1 Chg (contratos)</th>
-        <th>Señal</th><th class="text-right">Ret Abr-Sep</th>
+        <th>Year</th><th class="text-right">Q1 Chg (contracts)</th>
+        <th>Signal</th><th class="text-right">Ret Apr-Sep</th>
       </tr></thead>
       <tbody id="q1-table"></tbody>
     </table>
@@ -743,8 +744,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <div id="tab-exports" class="tab-panel">
   <div class="coming-soon">
     <div class="cs-icon">🚢</div>
-    <div class="cs-title">Exportaciones Brasil + Lineup Barcos</div>
-    <div class="cs-desc">Ritmo semanal de exportaciones de azúcar brasileño, lineup de barcos en puertos de Santos / Paranaguá / Maceió, comparativa vs temporadas anteriores.</div>
+    <div class="cs-title">Brazil Exports + Vessel Lineup</div>
+    <div class="cs-desc">Weekly pace of Brazilian sugar exports, vessel lineups at Santos / Paranaguá / Maceió ports, comparison vs prior seasons.</div>
     <div class="cs-sources">
       <span class="cs-source">UNICA Export Data</span>
       <span class="cs-source">SECEX / Comex Stat</span>
@@ -757,10 +758,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <div id="tab-weather" class="tab-panel">
   <div class="coming-soon">
     <div class="cs-icon">🌦️</div>
-    <div class="cs-title">Climatología — Brasil e India</div>
-    <div class="cs-desc">Precipitaciones en Ribeirão Preto y principales regiones cañeras de Brasil. Monzón indio (jun-sep). Correlación histórica con producción de caña y proyecciones de safra.</div>
+    <div class="cs-title">Weather — Brazil &amp; India</div>
+    <div class="cs-desc">Rainfall in Ribeirão Preto and key sugarcane regions of Brazil. Indian monsoon (Jun–Sep). Historical correlation with cane production and safra projections.</div>
     <div class="cs-sources">
-      <span class="cs-source">INMET Brasil</span>
+      <span class="cs-source">INMET Brazil</span>
       <span class="cs-source">IMD India Monsoon</span>
       <span class="cs-source">NOAA ENSO</span>
       <span class="cs-source">Open-Meteo API</span>
@@ -771,8 +772,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <div id="tab-futures" class="tab-panel">
   <div class="coming-soon">
     <div class="cs-icon">📉</div>
-    <div class="cs-title">Curva de Futuros SB / SF</div>
-    <div class="cs-desc">Estructura temporal de los futuros de azúcar crudo (SB) y blanco (SF). Contango vs backwardation. Evolución de la curva en los últimos 30/60/90 días.</div>
+    <div class="cs-title">Futures Curve — SB / SF</div>
+    <div class="cs-desc">Term structure of raw sugar (SB) and white sugar (SF) futures. Contango vs backwardation. Curve evolution over the last 30/60/90 days.</div>
     <div class="cs-sources">
       <span class="cs-source">ICE Futures</span>
       <span class="cs-source">Euronext (SF)</span>
@@ -786,11 +787,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
   <div class="coming-soon">
     <div class="cs-icon">↔️</div>
     <div class="cs-title">Spreads</div>
-    <div class="cs-desc">White premium (SF - SB × 22.046). Calendar spreads SB front vs back. Crack spread etanol/azúcar Brasil. Correlación BRL/USD vs SB.</div>
+    <div class="cs-desc">White premium (SF - SB × 22.046). Calendar spreads SB front vs back. Ethanol/sugar crack spread Brazil. BRL/USD vs SB correlation.</div>
     <div class="cs-sources">
-      <span class="cs-source">ICE SB (crudo)</span>
-      <span class="cs-source">Euronext SF (blanco)</span>
-      <span class="cs-source">CEPEA Etanol</span>
+      <span class="cs-source">ICE SB (raw)</span>
+      <span class="cs-source">Euronext SF (white)</span>
+      <span class="cs-source">CEPEA Ethanol</span>
       <span class="cs-source">BCB BRL/USD</span>
     </div>
   </div>
@@ -799,8 +800,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <div id="tab-options" class="tab-panel">
   <div class="coming-soon">
     <div class="cs-icon">⚙️</div>
-    <div class="cs-title">Opciones — Griegas & Volatility Surface</div>
-    <div class="cs-desc">Cadena de opciones SB con delta, gamma, theta, vega. Volatilidad implícita por strike y vencimiento. Skew histórico. Vol surface en 3D.</div>
+    <div class="cs-title">Options — Greeks &amp; Volatility Surface</div>
+    <div class="cs-desc">SB options chain with delta, gamma, theta, vega. Implied volatility by strike and expiry. Historical skew. 3D vol surface.</div>
     <div class="cs-sources">
       <span class="cs-source">ICE Options Data</span>
       <span class="cs-source">IBKR TWS API</span>
@@ -821,7 +822,7 @@ const COLORS = {
   border:'#D8DEE9', bg:'#FFFFFF', text:'#0D1117',
   amber:'#A85C00', emerald:'#0F6E38',
 };
-const MONO_FONT = "'IBM Plex Mono','Cascadia Code','Consolas',monospace";
+const MONO_FONT = "'Fira Code','Cascadia Code','Consolas',monospace";
 const GRID_H  = 'rgba(0,0,0,0.05)';
 const GRID_V  = 'rgba(0,0,0,0.03)';
 const CHART_DEFAULTS = {
@@ -922,7 +923,7 @@ async function loadSignal() {
 
   // Table
   const tbody = document.getElementById('shadow-trades-body');
-  if (!d.trades.length) { tbody.innerHTML = '<tr><td colspan="11" class="loading">Sin señales registradas aún</td></tr>'; return; }
+  if (!d.trades.length) { tbody.innerHTML = '<tr><td colspan="11" class="loading">No signals recorded yet</td></tr>'; return; }
   tbody.innerHTML = d.trades.map(t => {
     const dirTag = t.direction==='LONG'?`<span class="tag tag-long">LONG</span>`:
                    t.direction==='SHORT'?`<span class="tag tag-short">SHORT</span>`:`<span class="tag tag-wait">${t.direction||'—'}</span>`;
@@ -975,11 +976,11 @@ async function loadBrazil() {
   try {
     d = await fetch('/api/unica').then(r=>r.json());
   } catch(e) {
-    document.getElementById('br-subline').textContent = 'ERROR cargando API: ' + e.message;
+    document.getElementById('br-subline').textContent = 'API ERROR: ' + e.message;
     return;
   }
   try { _loadBrazilInner(d); } catch(e) {
-    document.getElementById('br-subline').textContent = 'ERROR JS: ' + e.message + ' | ' + e.stack?.split('\n')[1];
+    document.getElementById('br-subline').textContent = 'JS ERROR: ' + e.message + ' | ' + e.stack?.split('\n')[1];
     console.error('loadBrazil error:', e);
   }
 }
@@ -1319,7 +1320,7 @@ async function _loadBrazilInner(d) {
   ];
 
   document.getElementById('br-hist-tbody').innerHTML = HIST_METRICS.map((m, mi) => {
-    const rowBg = mi % 2 === 1 ? 'background:rgba(26,45,63,0.25)' : '';
+    const rowBg = mi % 2 === 1 ? 'background:rgba(0,0,0,0.025)' : '';
     return `<tr style="${rowBg}">
       <td style="color:var(--dim);font-size:11px;letter-spacing:.3px">${m.label}</td>
       ${histCols.map(s => {
@@ -1345,7 +1346,7 @@ async function loadForecast() {
   // Subtitle
   const nLive = rows.filter(r=>r.is_live).length;
   document.getElementById('fc-subtitle').textContent =
-    `Safra ${d.safra} · ${rows.filter(r=>!r.is_live).length} quinzenas publicadas · ${nLive} pendiente(s) · ${d.n_hist_safras} safras históricas`;
+    `Season ${d.safra} · ${rows.filter(r=>!r.is_live).length} periods published · ${nLive} pending · ${d.n_hist_safras} historical seasons`;
 
   // Accuracy summary header
   if (acc.n_compared > 0) {
@@ -1417,14 +1418,14 @@ async function loadForecast() {
     <div style="background:${kpiColors[k.src]};border:1px solid ${kpiBorder[k.src]};border-radius:6px;padding:12px 16px">
       <div style="font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">${k.label}</div>
       <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--text)">${k.val ?? '—'}</div>
-      <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">${k.unit} · ${acc.n_compared ?? 0}Q comparadas</div>
+      <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">${k.unit} · ${acc.n_compared ?? 0}Q compared</div>
     </div>
   `).join('');
 }
 
 async function refreshMapa() {
   const btn = document.querySelector('button[onclick="refreshMapa()"]');
-  if (btn) { btn.textContent = '⟳ Cargando...'; btn.disabled = true; }
+  if (btn) { btn.textContent = '⟳ Loading...'; btn.disabled = true; }
   try {
     const r = await fetch('/api/mapa/refresh', {method:'POST'});
     const j = await r.json();
@@ -1453,7 +1454,7 @@ async function loadUSDA() {
   const stu = latest.stu;
   document.getElementById('usda-stu').textContent = stu!=null ? stu.toFixed(1)+'%' : '—';
   document.getElementById('usda-stu').className = 'kpi-value '+(stu<22?'bull-text':stu>26?'bear-text':'neut-text');
-  document.getElementById('usda-stu-sub').textContent = stu<22?'MERCADO AJUSTADO':stu>26?'EXCEDENTE':'equilibrado';
+  document.getElementById('usda-stu-sub').textContent = stu<22?'TIGHT MARKET':stu>26?'SURPLUS':'balanced';
   const surp = latest.surplus;
   document.getElementById('usda-surplus').textContent = surp!=null ? (surp>=0?'+':'')+surp.toFixed(1)+' Mt' : '—';
   document.getElementById('usda-surplus').className = 'kpi-value '+(surp<0?'bull-text':surp>2?'bear-text':'neut-text');
@@ -1495,7 +1496,7 @@ async function loadUSDA() {
   chartSurplus = new Chart(document.getElementById('chart-surplus'), {
     type:'bar', data:{
       labels,
-      datasets:[{label:'Superávit/Déficit (Mt)',data:surps,backgroundColor:surpColors,borderRadius:3}],
+      datasets:[{label:'Surplus/Deficit (Mt)',data:surps,backgroundColor:surpColors,borderRadius:3}],
     },
     options:{...CHART_DEFAULTS},
   });
@@ -1504,9 +1505,9 @@ async function loadUSDA() {
   tbody.innerHTML = (c.countries||[]).map(cc => {
     const yoyClass = cc.yoy>0?'bear-text':cc.yoy<0?'bull-text':'dim-text';
     const yoyStr   = cc.yoy!=null ? `<span class="${yoyClass}">${cc.yoy>=0?'+':''}${cc.yoy}%</span>` : '—';
-    const regime   = cc.prod>30?`<span class="tag tag-short">MAYOR</span>`:
-                     cc.prod>15?`<span class="tag tag-neutral">MEDIO</span>`:
-                                `<span class="tag tag-wait">MENOR</span>`;
+    const regime   = cc.prod>30?`<span class="tag tag-short">MAJOR</span>`:
+                     cc.prod>15?`<span class="tag tag-neutral">MID</span>`:
+                                `<span class="tag tag-wait">MINOR</span>`;
     return `<tr>
       <td><strong>${cc.name}</strong> <span style="color:var(--muted);font-size:10px">${cc.code}</span></td>
       <td class="text-right text-mono">${cc.prod.toFixed(1)}</td>
@@ -1530,7 +1531,7 @@ async function loadCOT() {
   const pct = l.mm_pct;
   document.getElementById('cot-pct-val').textContent = pct!=null ? pct.toFixed(0)+'%' : '—';
   document.getElementById('cot-pct-val').className = 'kpi-value '+(pct>75?'bear-text':pct<25?'bull-text':'neut-text');
-  document.getElementById('cot-pct-sub').textContent = pct>75?'STRETCHED (SHORT signal)':pct<25?'DEPRESSED (LONG signal)':'zona neutra';
+  document.getElementById('cot-pct-sub').textContent = pct>75?'STRETCHED (SHORT signal)':pct<25?'DEPRESSED (LONG signal)':'neutral zone';
 
   document.getElementById('cot-ncomm-val').textContent = l.ncomm!=null ? (l.ncomm>=0?'+':'')+numFmt(l.ncomm) : '—';
   document.getElementById('cot-oi-val').textContent = l.oi!=null ? numFmt(l.oi) : '—';
@@ -1559,7 +1560,7 @@ async function loadCOT() {
     type:'line', data:{
       labels:dates,
       datasets:[
-        { label:'Percentil 3yr', data:pcts, borderColor:COLORS.purple,
+        { label:'3yr Percentile', data:pcts, borderColor:COLORS.purple,
           backgroundColor:'rgba(167,139,250,.08)', fill:true, tension:.2, pointRadius:0, borderWidth:2 },
         { label:'75% (BEAR)', data:Array(dates.length).fill(75), borderColor:'rgba(255,82,82,.4)',
           borderDash:[4,4], pointRadius:0, borderWidth:1 },
@@ -1597,7 +1598,7 @@ async function loadSeasonal() {
   chartSeasM = new Chart(document.getElementById('chart-seas-monthly'), {
     type:'bar', data:{
       labels:mLabels,
-      datasets:[{label:'Retorno promedio %', data:mAvg, backgroundColor:mColors, borderRadius:4}],
+      datasets:[{label:'Avg Return %', data:mAvg, backgroundColor:mColors, borderRadius:4}],
     },
     options:{...CHART_DEFAULTS},
   });
@@ -1624,7 +1625,7 @@ async function loadSeasonal() {
   chartQ1 = new Chart(document.getElementById('chart-q1-trigger'), {
     type:'scatter',
     data:{ datasets:[{
-      label:'Año (Q1 chg vs retorno abr-sep)',
+      label:'Year (Q1 chg vs Apr-Sep return)',
       data: q1.map(r => ({x:r.q1_chg, y:r.ret_aprsep, label:r.yr})),
       backgroundColor: q1c,
       pointRadius:6, pointHoverRadius:9,
@@ -1636,13 +1637,13 @@ async function loadSeasonal() {
         tooltip:{ callbacks:{
           label: ctx => {
             const r = q1[ctx.dataIndex];
-            return `${r.yr}: Q1_chg=${numFmt(r.q1_chg)} → abr-sep=${r.ret_aprsep!=null?(r.ret_aprsep>=0?'+':'')+r.ret_aprsep+'%':'n/a'}`;
+            return `${r.yr}: Q1_chg=${numFmt(r.q1_chg)} → apr-sep=${r.ret_aprsep!=null?(r.ret_aprsep>=0?'+':'')+r.ret_aprsep+'%':'n/a'}`;
           }
         }}
       },
       scales:{
-        x:{...CHART_DEFAULTS.scales.x, title:{display:true,text:'Q1 acumulación (contratos)',color:COLORS.dim,font:{size:11}}},
-        y:{...CHART_DEFAULTS.scales.y, title:{display:true,text:'Retorno abr-sep (%)',color:COLORS.dim,font:{size:11}}},
+        x:{...CHART_DEFAULTS.scales.x, title:{display:true,text:'Q1 Accumulation (contracts)',color:COLORS.dim,font:{size:11}}},
+        y:{...CHART_DEFAULTS.scales.y, title:{display:true,text:'Apr-Sep Return (%)',color:COLORS.dim,font:{size:11}}},
       },
     },
   });
