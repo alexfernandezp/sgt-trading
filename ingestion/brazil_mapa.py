@@ -831,38 +831,69 @@ def fetch_brazil_production(
 
 
 def get_latest_production(
-    session: Session, n: int = 4, *, reference: Optional[date] = None,
+    session: Session, n: int = 4, *,
+    reference: Optional[date] = None,
+    as_of_date: Optional[date] = None,
 ) -> list[dict]:
     """
-    Devuelve las N ultimas filas de brazil_production ordenadas por report_date DESC,
-    con freshness gate read-side (§4.1).
+    Devuelve las N ultimas quincenas de brazil_production (una fila por quincena,
+    la revision mas reciente), con freshness gate read-side (§4.1).
 
     La fila MAS RECIENTE se valida contra MAPA_MAX_AGE_DAYS (35d, §4). Si esta
     stale → lista vacia + WARNING (toda la serie es obsoleta, downstream debe
     degradar). Filas historicas dentro del top-N se mantienen siempre que la
-    cabeza pase el gate (la freshness aplica al "estado actual" reportado por
-    MAPA, no a cada quincena del historial).
+    cabeza pase el gate.
 
     Args:
-      session   — SQLAlchemy session.
-      n         — numero de quincenas mas recientes a devolver.
-      reference — fecha de referencia para freshness (default: date.today()).
-                  Inyectable para testing.
+      session    — SQLAlchemy session.
+      n          — numero de quincenas mas recientes a devolver.
+      reference  — fecha de referencia para freshness (default: date.today()).
+                   Inyectable para testing.
+      as_of_date — P3.E.5 PIT backtest support. Si se pasa, solo considera
+                   revisiones con report_issue_date <= as_of_date. Util para
+                   reconstruir "lo que MAPA mostraba en fecha X" sin look-ahead.
+                   None (default) → sin filtro (comportamiento live normal).
+
+    DISTINCT ON (harvest_year, fortnight_seq) garantiza una sola fila por quincena
+    (la revision mas reciente), independientemente de cuantas revisiones haya en DB.
     """
     from sqlalchemy import text
-    # P3.E.4 — lee cumulative columns (lo que MAPA emite). PIT-aware DISTINCT ON
-    # (year, seq) con ORDER BY issue_date DESC viene en P3.E.5. Por ahora cada
-    # revision genera una fila distinta — irrelevante mientras todas las filas
-    # legacy tienen revision_seq=1 e issue_date=report_date (backfill prudente).
-    rows = session.execute(text("""
+
+    if as_of_date is None:
+        # Live query: una fila por quincena, revision mas reciente sin filtro
+        inner = """
+            SELECT DISTINCT ON (harvest_year, fortnight_seq)
+                   report_date, harvest_year, fortnight_seq,
+                   cane_crushed_t_cumulative, sugar_t_cumulative,
+                   ethanol_total_m3_cumulative, sugar_mix_pct,
+                   report_issue_date, report_revision_seq
+            FROM   brazil_production
+            ORDER  BY harvest_year, fortnight_seq, report_issue_date DESC
+        """
+        params: dict = {"n": n}
+    else:
+        # PIT query: solo revisiones publicadas hasta as_of_date
+        inner = """
+            SELECT DISTINCT ON (harvest_year, fortnight_seq)
+                   report_date, harvest_year, fortnight_seq,
+                   cane_crushed_t_cumulative, sugar_t_cumulative,
+                   ethanol_total_m3_cumulative, sugar_mix_pct,
+                   report_issue_date, report_revision_seq
+            FROM   brazil_production
+            WHERE  report_issue_date <= :as_of
+            ORDER  BY harvest_year, fortnight_seq, report_issue_date DESC
+        """
+        params = {"n": n, "as_of": as_of_date}
+
+    rows = session.execute(text(f"""
         SELECT report_date, harvest_year, fortnight_seq,
                cane_crushed_t_cumulative, sugar_t_cumulative,
                ethanol_total_m3_cumulative, sugar_mix_pct,
                report_issue_date, report_revision_seq
-        FROM brazil_production
-        ORDER BY report_date DESC, report_issue_date DESC
-        LIMIT :n
-    """), {"n": n}).fetchall()
+        FROM   ({inner}) pit_latest
+        ORDER  BY report_date DESC
+        LIMIT  :n
+    """), params).fetchall()
 
     if not rows:
         return []
