@@ -380,6 +380,8 @@ def api_unica():
     MAX_Q = 24
     hist_range_min, hist_range_p25, hist_range_avg, hist_range_p75, hist_range_max = \
         [], [], [], [], []
+    hist_mix_p25, hist_mix_avg, hist_mix_p75 = [], [], []
+    hist_atr_p25, hist_atr_avg, hist_atr_p75 = [], [], []
     for qi in range(MAX_Q):
         vals = sorted([cum_sugar[sk][qi] for sk in COMPLETE_KEYS
                        if qi < len(cum_sugar.get(sk, []))])
@@ -394,6 +396,30 @@ def api_unica():
             for lst in [hist_range_min, hist_range_p25, hist_range_avg,
                         hist_range_p75, hist_range_max]:
                 lst.append(None)
+
+        # Mix% historical range per quinzena
+        mix_v = sorted([cs_by_safra[sk][qi]["mix"] for sk in COMPLETE_KEYS
+                        if qi < len(cs_by_safra.get(sk, []))
+                        and cs_by_safra[sk][qi]["mix"] is not None])
+        if mix_v:
+            n = len(mix_v)
+            hist_mix_p25.append(round(mix_v[max(0, n // 4 - 1)], 1))
+            hist_mix_avg.append(round(sum(mix_v) / n, 1))
+            hist_mix_p75.append(round(mix_v[min(n - 1, 3 * n // 4)], 1))
+        else:
+            hist_mix_p25.append(None); hist_mix_avg.append(None); hist_mix_p75.append(None)
+
+        # ATR historical range per quinzena
+        atr_v = sorted([cs_by_safra[sk][qi]["atr"] for sk in COMPLETE_KEYS
+                        if qi < len(cs_by_safra.get(sk, []))
+                        and cs_by_safra[sk][qi]["atr"] is not None])
+        if atr_v:
+            n = len(atr_v)
+            hist_atr_p25.append(round(atr_v[max(0, n // 4 - 1)], 1))
+            hist_atr_avg.append(round(sum(atr_v) / n, 1))
+            hist_atr_p75.append(round(atr_v[min(n - 1, 3 * n // 4)], 1))
+        else:
+            hist_atr_p25.append(None); hist_atr_avg.append(None); hist_atr_p75.append(None)
 
     # ── Per-quincena series: only current + prev (clean comparison) ───────────
     def _pad24(series):
@@ -423,6 +449,12 @@ def api_unica():
         "hist_p25":       hist_range_p25,
         "hist_avg":       hist_range_avg,
         "hist_p75":       hist_range_p75,
+        "hist_mix_p25":   hist_mix_p25,
+        "hist_mix_avg":   hist_mix_avg,
+        "hist_mix_p75":   hist_mix_p75,
+        "hist_atr_p25":   hist_atr_p25,
+        "hist_atr_avg":   hist_atr_avg,
+        "hist_atr_p75":   hist_atr_p75,
         # Per-quincena comparison: current vs prev only
         "cur_mix":   cur_mix,  "prev_mix":  prev_mix,
         "cur_atr":   cur_atr,  "prev_atr":  prev_atr,

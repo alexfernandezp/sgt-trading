@@ -858,14 +858,19 @@ const BR_OPTS = (yLabel) => ({
 async function loadBrazil() {
   const d = await fetch('/api/unica').then(r=>r.json());
   const sm = d.summary || {};
-  const Q_LABELS = Array.from({length:24}, (_,i) => `Q${i+1}`);
+  const Q_LABELS = [
+    'Apr-16','May-01','May-16','Jun-01','Jun-16','Jul-01','Jul-16','Aug-01',
+    'Aug-16','Sep-01','Sep-16','Oct-01','Oct-16','Nov-01','Nov-16','Dec-01',
+    'Dec-16','Jan-01','Jan-16','Feb-01','Feb-16','Mar-01','Mar-16','Apr-01'
+  ];
   const cur  = sm.safra      || '—';
   const prev = d.prev_safra  || '—';
   const _n   = (v, dp, suf='') => v!=null ? v.toFixed(dp)+suf : '—';
 
   // ── Info bar ──────────────────────────────────────────────────────────────
+  const _qLabel = sm.q_num ? (Q_LABELS[sm.q_num - 1] || `Q${sm.q_num}`) : '?';
   document.getElementById('br-subline').textContent =
-    `UNICA · Season ${cur} · Period Q${sm.q_num||'?'} / 24 · Last: ${sm.q_date||'—'}`;
+    `UNICA · Season ${cur} · Period ${_qLabel} (${sm.q_num||'?'}/24) · Last: ${sm.q_date||'—'}`;
 
   // Historical range (replaces bogus pace projection)
   if (d.hist_season_min != null) {
@@ -932,6 +937,12 @@ async function loadBrazil() {
   _brCharts.mix = new Chart(document.getElementById('chart-br-mix'), {
     type:'line',
     data:{ labels:Q_LABELS, datasets:[
+      { label:'_mix_p25', data:d.hist_mix_p25||[], borderColor:'transparent',
+        backgroundColor:'rgba(74,159,255,0.07)', fill:'+1', pointRadius:0, tension:.3 },
+      { label:'_mix_p75', data:d.hist_mix_p75||[], borderColor:'rgba(74,159,255,0.13)', borderWidth:1,
+        backgroundColor:'transparent', fill:false, pointRadius:0, tension:.3, borderDash:[3,3] },
+      { label:'10-yr avg', data:d.hist_mix_avg||[], borderColor:'rgba(74,159,255,0.32)', borderWidth:1.5,
+        borderDash:[6,4], pointRadius:0, tension:.3 },
       { label:prev, data:d.prev_mix||[], borderColor:'rgba(90,112,144,0.55)', borderWidth:1.5,
         pointRadius:0, tension:.3, borderDash:[4,3] },
       { label:cur, data:curMix, borderColor:'#26c6a0', borderWidth:2.5,
@@ -940,6 +951,9 @@ async function loadBrazil() {
         tension:.3 },
     ]},
     options:{...BR_OPTS('%'),
+      plugins:{...BR_OPTS('').plugins,
+        legend:{ labels:{ color:'#4a6080', font:{size:11,family:MONO_FONT}, boxWidth:14,
+          filter: item => !item.text.startsWith('_') }}},
       scales:{...BR_OPTS('').scales,
         y:{...CHART_DEFAULTS.scales.y, min:0, max:65,
            title:{display:true,text:'%',color:'#3a5068',font:{size:11,family:MONO_FONT}}}}},
@@ -950,6 +964,12 @@ async function loadBrazil() {
   _brCharts.atr = new Chart(document.getElementById('chart-br-atr'), {
     type:'line',
     data:{ labels:Q_LABELS, datasets:[
+      { label:'_atr_p25', data:d.hist_atr_p25||[], borderColor:'transparent',
+        backgroundColor:'rgba(74,159,255,0.07)', fill:'+1', pointRadius:0, tension:.3 },
+      { label:'_atr_p75', data:d.hist_atr_p75||[], borderColor:'rgba(74,159,255,0.13)', borderWidth:1,
+        backgroundColor:'transparent', fill:false, pointRadius:0, tension:.3, borderDash:[3,3] },
+      { label:'10-yr avg', data:d.hist_atr_avg||[], borderColor:'rgba(74,159,255,0.32)', borderWidth:1.5,
+        borderDash:[6,4], pointRadius:0, tension:.3 },
       { label:prev, data:d.prev_atr||[], borderColor:'rgba(90,112,144,0.55)', borderWidth:1.5,
         pointRadius:0, tension:.3, borderDash:[4,3] },
       { label:cur, data:curAtr, borderColor:'#f57c00', borderWidth:2.5,
@@ -958,6 +978,9 @@ async function loadBrazil() {
         tension:.3 },
     ]},
     options:{...BR_OPTS('kg/t'),
+      plugins:{...BR_OPTS('').plugins,
+        legend:{ labels:{ color:'#4a6080', font:{size:11,family:MONO_FONT}, boxWidth:14,
+          filter: item => !item.text.startsWith('_') }}},
       scales:{...BR_OPTS('').scales,
         y:{...CHART_DEFAULTS.scales.y,
            title:{display:true,text:'kg/t',color:'#3a5068',font:{size:11,family:MONO_FONT}}}}},
