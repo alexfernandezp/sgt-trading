@@ -351,7 +351,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
           <div style="font-size:9px;color:var(--muted);font-family:var(--mono)" id="br-nq-atr-range">—</div>
         </div>
       </div>
-      <div style="font-size:8px;color:var(--muted);font-family:var(--mono);margin-top:4px">10-yr hist avg · range: P25–P75</div>
+      <div style="font-size:8px;color:var(--muted);font-family:var(--mono);margin-top:4px;display:flex;gap:8px;align-items:center">
+        <span>pace+trend+ratio · P25–P75</span>
+        <span id="br-nq-conf" style="border-radius:3px;padding:1px 5px;font-size:8px;font-family:var(--mono)"></span>
+        <span id="br-nq-pace" style="color:var(--dim)"></span>
+      </div>
     </div>
 
     <!-- RIGHT: UNICA publication tracker -->
@@ -898,7 +902,19 @@ const BR_OPTS = (yLabel) => ({
 });
 
 async function loadBrazil() {
-  const d = await fetch('/api/unica').then(r=>r.json());
+  let d;
+  try {
+    d = await fetch('/api/unica').then(r=>r.json());
+  } catch(e) {
+    document.getElementById('br-subline').textContent = 'ERROR cargando API: ' + e.message;
+    return;
+  }
+  try { _loadBrazilInner(d); } catch(e) {
+    document.getElementById('br-subline').textContent = 'ERROR JS: ' + e.message + ' | ' + e.stack?.split('\n')[1];
+    console.error('loadBrazil error:', e);
+  }
+}
+async function _loadBrazilInner(d) {
   const sm = d.summary || {};
   const Q_LABELS = [
     'Apr-16','May-01','May-16','Jun-01','Jun-16','Jul-01','Jul-16','Aug-01',
@@ -957,18 +973,37 @@ async function loadBrazil() {
     }
   }
 
-  // ── Next quinzena forecast ─────────────────────────────────────────────────
+  // ── Next quinzena forecast (quant model) ──────────────────────────────────
   const nq = d.next_q_forecast;
   if (nq) {
     document.getElementById('br-nq-label').textContent = `${nq.label} (Q${nq.q_num})`;
-    document.getElementById('br-nq-cane').textContent  = nq.cane_avg  != null ? nq.cane_avg.toFixed(1)  : '—';
-    document.getElementById('br-nq-sugar').textContent = nq.sugar_avg != null ? nq.sugar_avg.toFixed(2) : '—';
-    document.getElementById('br-nq-mix').textContent   = nq.mix_avg   != null ? nq.mix_avg.toFixed(1)+'%' : '—';
-    document.getElementById('br-nq-atr').textContent   = nq.atr_avg   != null ? nq.atr_avg.toFixed(1)   : '—';
+    document.getElementById('br-nq-cane').textContent  = nq.cane_forecast  != null ? nq.cane_forecast.toFixed(1)  : '—';
+    document.getElementById('br-nq-sugar').textContent = nq.sugar_forecast != null ? nq.sugar_forecast.toFixed(2) : '—';
+    document.getElementById('br-nq-mix').textContent   = nq.mix_forecast   != null ? nq.mix_forecast.toFixed(1)+'%' : '—';
+    document.getElementById('br-nq-atr').textContent   = nq.atr_forecast   != null ? nq.atr_forecast.toFixed(1)   : '—';
     if (nq.mix_p25 != null && nq.mix_p75 != null)
       document.getElementById('br-nq-mix-range').textContent = `${nq.mix_p25}–${nq.mix_p75}%`;
     if (nq.atr_p25 != null && nq.atr_p75 != null)
       document.getElementById('br-nq-atr-range').textContent = `${nq.atr_p25}–${nq.atr_p75}`;
+    // Confidence badge
+    const confEl = document.getElementById('br-nq-conf');
+    if (confEl && nq.confidence) {
+      const confColors = {low:'rgba(245,124,0,0.15)',medium:'rgba(90,160,90,0.15)',high:'rgba(38,198,218,0.15)'};
+      const confBorder = {low:'rgba(245,124,0,0.4)',medium:'rgba(90,160,90,0.4)',high:'rgba(38,198,218,0.4)'};
+      const confText   = {low:'var(--bear)',medium:'rgba(90,160,90,1)',high:'var(--bull)'};
+      confEl.textContent = nq.confidence.toUpperCase();
+      confEl.style.background = confColors[nq.confidence] || '';
+      confEl.style.border = `1px solid ${confBorder[nq.confidence]||'var(--border2)'}`;
+      confEl.style.color = confText[nq.confidence] || 'var(--dim)';
+    }
+    // Pace ratio indicator
+    const paceEl = document.getElementById('br-nq-pace');
+    if (paceEl && nq.pace_ratio != null) {
+      const pr = nq.pace_ratio;
+      const paceStr = pr >= 1 ? `pace +${((pr-1)*100).toFixed(0)}%` : `pace ${((pr-1)*100).toFixed(0)}%`;
+      paceEl.textContent = paceStr;
+      paceEl.style.color = pr > 1.05 ? 'var(--bear)' : (pr < 0.95 ? 'var(--bull)' : 'var(--dim)');
+    }
   }
 
   // ── KPI cards ──────────────────────────────────────────────────────────────

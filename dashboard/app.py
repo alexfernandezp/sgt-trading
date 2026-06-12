@@ -12,6 +12,7 @@ from database import SessionLocal
 from sqlalchemy import text
 from datetime import datetime, date, timedelta
 from pathlib import Path
+from ingestion.brazil_forecast import forecast_next_quinzena
 
 app = Flask(__name__)
 LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
@@ -454,27 +455,18 @@ def api_unica():
     except Exception as _e:
         logging.warning("unica_tracker: %s", _e)
 
-    # ── Next quinzena forecast (10-yr hist avg for the upcoming period) ────────
-    next_qi = len(cs_by_safra[current_safra])   # 0-indexed: number of periods already published
-    _Q_DATE_LABELS = [
-        'Apr-16','May-01','May-16','Jun-01','Jun-16','Jul-01','Jul-16','Aug-01',
-        'Aug-16','Sep-01','Sep-16','Oct-01','Oct-16','Nov-01','Nov-16','Dec-01',
-        'Dec-16','Jan-01','Jan-16','Feb-01','Feb-16','Mar-01','Mar-16','Apr-01'
-    ]
-    next_q_forecast = None
-    if 0 <= next_qi < MAX_Q:
-        next_q_forecast = {
-            "q_num":     next_qi + 1,
-            "label":     _Q_DATE_LABELS[next_qi],
-            "sugar_avg": hist_sugar_avg[next_qi] if next_qi < len(hist_sugar_avg) else None,
-            "cane_avg":  hist_cane_avg[next_qi]  if next_qi < len(hist_cane_avg)  else None,
-            "mix_avg":   hist_mix_avg[next_qi]   if next_qi < len(hist_mix_avg)   else None,
-            "mix_p25":   hist_mix_p25[next_qi]   if next_qi < len(hist_mix_p25)   else None,
-            "mix_p75":   hist_mix_p75[next_qi]   if next_qi < len(hist_mix_p75)   else None,
-            "atr_avg":   hist_atr_avg[next_qi]   if next_qi < len(hist_atr_avg)   else None,
-            "atr_p25":   hist_atr_p25[next_qi]   if next_qi < len(hist_atr_p25)   else None,
-            "atr_p75":   hist_atr_p75[next_qi]   if next_qi < len(hist_atr_p75)   else None,
-        }
+    # ── Next quinzena forecast (quant model: pace+trend+ratio) ──────────────────
+    next_q_forecast = forecast_next_quinzena(
+        current_qs    = cs_by_safra[current_safra],
+        hist_cane_avg = hist_cane_avg,
+        hist_sugar_avg= hist_sugar_avg,
+        hist_mix_avg  = hist_mix_avg,
+        hist_mix_p25  = hist_mix_p25,
+        hist_mix_p75  = hist_mix_p75,
+        hist_atr_avg  = hist_atr_avg,
+        hist_atr_p25  = hist_atr_p25,
+        hist_atr_p75  = hist_atr_p75,
+    )
 
     # ── Per-quincena series: only current + prev (clean comparison) ───────────
     def _pad24(series):
