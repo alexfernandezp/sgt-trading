@@ -10,7 +10,8 @@ logging.basicConfig(level=logging.WARNING)
 from flask import Flask, render_template, jsonify
 from database import SessionLocal
 from sqlalchemy import text
-from datetime import datetime
+from datetime import datetime, date, timedelta
+from pathlib import Path
 
 app = Flask(__name__)
 LOGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
@@ -382,6 +383,7 @@ def api_unica():
         [], [], [], [], []
     hist_mix_p25, hist_mix_avg, hist_mix_p75 = [], [], []
     hist_atr_p25, hist_atr_avg, hist_atr_p75 = [], [], []
+    hist_sugar_avg, hist_cane_avg = [], []
     for qi in range(MAX_Q):
         vals = sorted([cum_sugar[sk][qi] for sk in COMPLETE_KEYS
                        if qi < len(cum_sugar.get(sk, []))])
@@ -420,6 +422,59 @@ def api_unica():
             hist_atr_p75.append(round(atr_v[min(n - 1, 3 * n // 4)], 1))
         else:
             hist_atr_p25.append(None); hist_atr_avg.append(None); hist_atr_p75.append(None)
+
+        # Sugar + Cane per-quinzena historical avg (for next-quinzena forecast)
+        sugar_v = [cs_by_safra[sk][qi]["sugar"] for sk in COMPLETE_KEYS
+                   if qi < len(cs_by_safra.get(sk, [])) and cs_by_safra[sk][qi]["sugar"] is not None]
+        hist_sugar_avg.append(round(sum(sugar_v) / len(sugar_v), 3) if sugar_v else None)
+        cane_v = [cs_by_safra[sk][qi]["cane"] for sk in COMPLETE_KEYS
+                  if qi < len(cs_by_safra.get(sk, [])) and cs_by_safra[sk][qi]["cane"] is not None]
+        hist_cane_avg.append(round(sum(cane_v) / len(cane_v), 1) if cane_v else None)
+
+    # ── UNICA publication tracker ─────────────────────────────────────────────
+    _state_path = Path(__file__).parent.parent / "data" / "unica_state.json"
+    unica_tracker = {"status": "unknown", "is_overdue": False}
+    try:
+        _st = json.loads(_state_path.read_text(encoding="utf-8")) if _state_path.exists() else {}
+        _pos_str = _st.get("last_position_date")
+        if _pos_str:
+            _pos      = date.fromisoformat(_pos_str)
+            _next_pos = _pos + timedelta(days=15)
+            _next_pub = _next_pos + timedelta(days=26)
+            _days_to  = (_next_pub - date.today()).days
+            unica_tracker = {
+                "last_position_date": str(_pos),
+                "next_data_period":   str(_next_pos),
+                "next_pub_est":       str(_next_pub),
+                "days_to_pub":        _days_to,
+                "overdue_days":       max(0, -_days_to),
+                "is_overdue":         _days_to < 0,
+                "status": "OVERDUE" if _days_to < 0 else ("WATCHMODE" if _days_to <= 5 else "PENDING"),
+            }
+    except Exception as _e:
+        logging.warning("unica_tracker: %s", _e)
+
+    # ── Next quinzena forecast (10-yr hist avg for the upcoming period) ────────
+    next_qi = len(cs_by_safra[current_safra])   # 0-indexed: number of periods already published
+    _Q_DATE_LABELS = [
+        'Apr-16','May-01','May-16','Jun-01','Jun-16','Jul-01','Jul-16','Aug-01',
+        'Aug-16','Sep-01','Sep-16','Oct-01','Oct-16','Nov-01','Nov-16','Dec-01',
+        'Dec-16','Jan-01','Jan-16','Feb-01','Feb-16','Mar-01','Mar-16','Apr-01'
+    ]
+    next_q_forecast = None
+    if 0 <= next_qi < MAX_Q:
+        next_q_forecast = {
+            "q_num":     next_qi + 1,
+            "label":     _Q_DATE_LABELS[next_qi],
+            "sugar_avg": hist_sugar_avg[next_qi] if next_qi < len(hist_sugar_avg) else None,
+            "cane_avg":  hist_cane_avg[next_qi]  if next_qi < len(hist_cane_avg)  else None,
+            "mix_avg":   hist_mix_avg[next_qi]   if next_qi < len(hist_mix_avg)   else None,
+            "mix_p25":   hist_mix_p25[next_qi]   if next_qi < len(hist_mix_p25)   else None,
+            "mix_p75":   hist_mix_p75[next_qi]   if next_qi < len(hist_mix_p75)   else None,
+            "atr_avg":   hist_atr_avg[next_qi]   if next_qi < len(hist_atr_avg)   else None,
+            "atr_p25":   hist_atr_p25[next_qi]   if next_qi < len(hist_atr_p25)   else None,
+            "atr_p75":   hist_atr_p75[next_qi]   if next_qi < len(hist_atr_p75)   else None,
+        }
 
     # ── Per-quincena series: only current + prev (clean comparison) ───────────
     def _pad24(series):
@@ -466,6 +521,9 @@ def api_unica():
         "hist_season_min":  hist_season_min,
         "hist_season_max":  hist_season_max,
         "hist_season_med":  hist_season_med,
+        # UNICA publication tracker + next quinzena forecast
+        "unica_tracker":    unica_tracker,
+        "next_q_forecast":  next_q_forecast,
     })
 
 

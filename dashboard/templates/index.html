@@ -311,16 +311,58 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 <div id="tab-brazil" class="tab-panel">
 
   <!-- ── Terminal header strip ── -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding:10px 16px;background:var(--surface);border:1px solid var(--border)">
+  <div style="display:grid;grid-template-columns:1fr auto auto;gap:20px;align-items:start;margin-bottom:16px;padding:12px 16px;background:var(--surface);border:1px solid var(--border)">
+
+    <!-- LEFT: title + season status -->
     <div>
       <div style="font-size:11px;font-family:var(--mono);color:var(--neut);letter-spacing:2.5px;text-transform:uppercase">BRAZIL · CENTRO-SUL · UNICA BIWEEKLY</div>
       <div style="font-size:12px;color:var(--dim);margin-top:4px;font-family:var(--mono)" id="br-subline">Loading…</div>
+      <div style="margin-top:8px;display:flex;gap:10px;align-items:center">
+        <span style="font-size:9px;font-family:var(--mono);color:var(--dim);letter-spacing:1px;text-transform:uppercase">10-season range:</span>
+        <span style="font-size:13px;font-weight:700;font-family:var(--mono);color:var(--text)" id="br-hist-range">—</span>
+        <span style="font-size:10px;font-family:var(--mono);color:var(--dim)" id="br-hist-med">—</span>
+      </div>
     </div>
-    <div style="text-align:right">
-      <div style="font-size:9px;font-family:var(--mono);color:var(--dim);letter-spacing:1.5px;text-transform:uppercase">CS 10-Season Historical Range</div>
-      <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--text);margin-top:2px" id="br-hist-range">—</div>
-      <div style="font-size:10px;font-family:var(--mono);color:var(--dim);margin-top:1px" id="br-hist-med">median: —</div>
+
+    <!-- CENTER: Next quinzena forecast -->
+    <div style="border-left:1px solid var(--border2);padding-left:20px;min-width:240px">
+      <div style="font-size:9px;font-family:var(--mono);color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px">
+        NEXT PERIOD FORECAST · <span id="br-nq-label" style="color:var(--neut)">—</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <div>
+          <div style="font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:.5px">CANE</div>
+          <div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--text)" id="br-nq-cane">—</div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">Mt</div>
+        </div>
+        <div>
+          <div style="font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:.5px">SUGAR</div>
+          <div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--text)" id="br-nq-sugar">—</div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono)">Mt</div>
+        </div>
+        <div>
+          <div style="font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:.5px">MIX%</div>
+          <div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--neut)" id="br-nq-mix">—</div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono)" id="br-nq-mix-range">—</div>
+        </div>
+        <div>
+          <div style="font-size:8px;color:var(--dim);font-family:var(--mono);letter-spacing:.5px">ATR</div>
+          <div style="font-size:13px;font-weight:600;font-family:var(--mono);color:var(--neut)" id="br-nq-atr">—</div>
+          <div style="font-size:9px;color:var(--muted);font-family:var(--mono)" id="br-nq-atr-range">—</div>
+        </div>
+      </div>
+      <div style="font-size:8px;color:var(--muted);font-family:var(--mono);margin-top:4px">10-yr hist avg · range: P25–P75</div>
     </div>
+
+    <!-- RIGHT: UNICA publication tracker -->
+    <div style="border-left:1px solid var(--border2);padding-left:20px;min-width:180px;text-align:right">
+      <div style="font-size:9px;font-family:var(--mono);color:var(--dim);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px">UNICA TRACKER</div>
+      <div style="font-size:16px;font-weight:700;font-family:var(--mono);margin-bottom:3px" id="br-pub-countdown">—</div>
+      <div style="font-size:10px;font-family:var(--mono);color:var(--dim)" id="br-pub-est-date">Est: —</div>
+      <div style="font-size:10px;font-family:var(--mono);color:var(--dim);margin-top:2px" id="br-pub-data-period">Data: —</div>
+      <div style="margin-top:6px;font-size:10px;font-family:var(--mono);font-weight:600;padding:3px 8px;border-radius:3px;display:inline-block" id="br-pub-badge">—</div>
+    </div>
+
   </div>
 
   <!-- ── KPI 4 cards ── -->
@@ -872,12 +914,61 @@ async function loadBrazil() {
   document.getElementById('br-subline').textContent =
     `UNICA · Season ${cur} · Period ${_qLabel} (${sm.q_num||'?'}/24) · Last: ${sm.q_date||'—'}`;
 
-  // Historical range (replaces bogus pace projection)
+  // Historical range
   if (d.hist_season_min != null) {
     document.getElementById('br-hist-range').textContent =
       `${d.hist_season_min} – ${d.hist_season_max} Mt`;
     document.getElementById('br-hist-med').textContent =
       `median: ${d.hist_season_med} Mt`;
+  }
+
+  // ── UNICA publication tracker ──────────────────────────────────────────────
+  const tr = d.unica_tracker || {};
+  if (tr.next_pub_est) {
+    const pubDate = tr.next_pub_est.substring(5).replace('-', '/');  // "MM/DD"
+    const dataDate = (tr.next_data_period||'').substring(5).replace('-', '/');
+    document.getElementById('br-pub-est-date').textContent  = `Est pub: ${pubDate}`;
+    document.getElementById('br-pub-data-period').textContent = `Data thru: ${dataDate}`;
+
+    const badge = document.getElementById('br-pub-badge');
+    const countdown = document.getElementById('br-pub-countdown');
+    if (tr.is_overdue) {
+      const d_over = tr.overdue_days;
+      countdown.textContent = `OVERDUE ${d_over}d`;
+      countdown.style.color = 'var(--bear)';
+      badge.textContent = '⚠ LATE';
+      badge.style.background = 'rgba(240,64,64,0.15)';
+      badge.style.color = 'var(--bear)';
+      badge.style.border = '1px solid rgba(240,64,64,0.3)';
+    } else if (tr.status === 'WATCHMODE') {
+      countdown.textContent = `in ${tr.days_to_pub}d`;
+      countdown.style.color = 'var(--neut)';
+      badge.textContent = 'WATCHMODE';
+      badge.style.background = 'rgba(245,124,0,0.12)';
+      badge.style.color = 'var(--neut)';
+      badge.style.border = '1px solid rgba(245,124,0,0.3)';
+    } else {
+      countdown.textContent = `in ${tr.days_to_pub}d`;
+      countdown.style.color = 'var(--dim)';
+      badge.textContent = 'PENDING';
+      badge.style.background = 'rgba(90,112,144,0.1)';
+      badge.style.color = 'var(--dim)';
+      badge.style.border = '1px solid var(--border2)';
+    }
+  }
+
+  // ── Next quinzena forecast ─────────────────────────────────────────────────
+  const nq = d.next_q_forecast;
+  if (nq) {
+    document.getElementById('br-nq-label').textContent = `${nq.label} (Q${nq.q_num})`;
+    document.getElementById('br-nq-cane').textContent  = nq.cane_avg  != null ? nq.cane_avg.toFixed(1)  : '—';
+    document.getElementById('br-nq-sugar').textContent = nq.sugar_avg != null ? nq.sugar_avg.toFixed(2) : '—';
+    document.getElementById('br-nq-mix').textContent   = nq.mix_avg   != null ? nq.mix_avg.toFixed(1)+'%' : '—';
+    document.getElementById('br-nq-atr').textContent   = nq.atr_avg   != null ? nq.atr_avg.toFixed(1)   : '—';
+    if (nq.mix_p25 != null && nq.mix_p75 != null)
+      document.getElementById('br-nq-mix-range').textContent = `${nq.mix_p25}–${nq.mix_p75}%`;
+    if (nq.atr_p25 != null && nq.atr_p75 != null)
+      document.getElementById('br-nq-atr-range').textContent = `${nq.atr_p25}–${nq.atr_p75}`;
   }
 
   // ── KPI cards ──────────────────────────────────────────────────────────────
