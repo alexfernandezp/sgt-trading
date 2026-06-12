@@ -236,8 +236,12 @@ def api_unica():
         total_sugar = sum(q["sugar"] for q in qs if q["sugar"])
         total_cane  = sum(q["cane"]  for q in qs if q["cane"])
         total_eth   = sum(q["eth"]   for q in qs if q["eth"])
-        mix_vals    = [q["mix"] for q in qs if q["mix"]]
-        atr_vals    = [q["atr"] for q in qs if q["atr"]]
+        # Medias ponderadas por caña molida (simple average produce valores erróneos:
+        # las últimas quincenas tienen poco volumen pero mix muy bajo y tiran la media)
+        cane_mix = [(q["cane"], q["mix"]) for q in qs if q["cane"] and q["mix"]]
+        cane_atr = [(q["cane"], q["atr"]) for q in qs if q["cane"] and q["atr"]]
+        w_cane_mix = sum(c for c, _ in cane_mix)
+        w_cane_atr = sum(c for c, _ in cane_atr)
         n_q         = len(qs)
         is_complete = n_q >= 23
         season_totals.append({
@@ -245,8 +249,8 @@ def api_unica():
             "total_sugar": round(total_sugar, 2),
             "total_cane":  round(total_cane,  1),
             "total_eth":   round(total_eth,   2),
-            "avg_mix":     round(sum(mix_vals) / len(mix_vals), 1) if mix_vals else None,
-            "avg_atr":     round(sum(atr_vals) / len(atr_vals), 1) if atr_vals else None,
+            "avg_mix":     round(sum(c * m for c, m in cane_mix) / w_cane_mix, 1) if w_cane_mix else None,
+            "avg_atr":     round(sum(c * a for c, a in cane_atr) / w_cane_atr, 1) if w_cane_atr else None,
             "n_q":         n_q,
             "complete":    is_complete,
         })
